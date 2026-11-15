@@ -1,0 +1,28 @@
+RECOMMENDED CITATION ORDER FOR LR SECTION
+
+Section 2.1 — Sepsis Burden & Clinical Scoring
+→ WHO 2020 (#16), then clinical scoring literature (from your existing references list: Ferrer et al., Kumar et al.)
+
+Section 2.2 — ML/DL for Sepsis Prediction
+→ Reyna et al. 2020 (#18) → Lauritsen et al. 2020 (#28) → Rosnati & Fortuin 2021 (#20) → Wang et al. 2021 (#19) → Khoushabar & Ghafariasl 2024 (#12)
+
+Section 2.3 — Federated Learning Foundations
+→ McMahan et al. 2017 (#1) → Kairouz et al. 2021 (#9) → Li et al. 2021 (#8) → Bonawitz et al. 2019 (#6) → Beutel et al. 2020 (#10)
+
+Section 2.4 — Federated Learning in Healthcare
+→ Rieke et al. 2020 (#25) → Sheller et al. 2020 (#22) → Pfitzner et al. 2021 (#15) → Mehrjou et al. 2022 (#11)
+
+Section 2.5 — Federated Sepsis Prediction (gap NeuralICU fills)
+→ Düsing & Cimiano 2025 (#13) → Pan et al. 2026 (#24)
+
+Section 2.6 — Model Architecture
+→ Vaswani et al. 2017 (#3) → Bai et al. 2018 (#5) → Bednarski et al. 2022 (#23) → TERTIAN 2022 (#17)
+
+Section 2.7 — Differential Privacy & Security
+→ Abadi et al. 2016 (#14) → Geyer et al. 2017 (#4) → Zhu et al. 2019 (#7) → Blanchard et al. 2017 (#2)
+
+Section 2.8 — Datasets
+→ Johnson et al. 2016 (#26) → Pollard et al. 2018 (#27) → Harutyunyan et al. 2019 (#21)     
+
+
+The 26 core papers map cleanly onto 8 subsections for your Related Work: Sepsis epidemiology → ML Sepsis prediction → FL foundations → FL in healthcare → Federated sepsis (the gap you fill) → TCN/Transformer architecture → Differential privacy & security → Datasets. 

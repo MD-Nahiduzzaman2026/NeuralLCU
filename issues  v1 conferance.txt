@@ -1,0 +1,1438 @@
+Total issues: 17 (4 critical, 5 major, 4 moderate, 4 minor)
+CRITICAL (4) — block accept, fix first
+AUROC unstable — 5-seed range 0.19–0.92, mean~0.58, SD~0.25. Headline 0.8405/0.8701 = unreliable point estimates, not proof. Fix: report mean/SD/CI, run more seeds, bigger cohort.
+DP privacy claim underspecified — ε=1.0 stated but no composition math across steps/rounds/tensors/clients. Fix: full privacy accountant (e.g. RDP/moments accountant), specify per-what ε applies.
+Clinical impact overclaimed — 30–45% mortality reduction not from your model, borrowed from lit. Fix: cut or reframe as projected/literature-based, not measured.
+Cross-dataset baseline invalid — XGBoost on PhysioNet 2019, TCN-Transformer on MIMIC-III Demo. Diff datasets → AUROC compare meaningless. Fix: run all models same dataset, same split.
+MAJOR (5) — must fix before resubmit
+Missing repro details: label rule, sepsis onset def, exclusion/censoring, LR, batch size, optimizer, early stop, exact train/val/test counts.
+FedAvg vs coordinate-median/Krum contradiction — paper says FedAvg but describes different aggregation elsewhere. Fix: clarify what actually ran.
+No matched baselines on same cohort (logistic reg, RF, GRU-D/LSTM, TCN-only, Transformer-only ablations needed).
+Hardware/latency claims = estimates, not measured. Fix: benchmark real RPi4/ESP32 or label clearly as "estimated."
+No calibration/uncertainty reporting (Brier score, calibration curve, CI).
+MODERATE (4) — should fix
+Table/figure numbering inconsistent (Table VI/VII/VIII/IX/XI refs don't match; Fig.3 says "12 channels" vs text "14 channels").
+Clinical safety / alert-burden discussion thin.
+Literature-projected numbers mixed with measured results — separate clearly.
+Bangladesh-specific deployment claim needs future pilot data, currently unsupported.
+MINOR (4) — polish
+Duplicate intro material — trim.
+Inconsistent terms: "six-hour risk" vs "six-hour onset probability" vs "early warning" — pick one.
+Reference formatting not IEEE-compliant.
+Cost basis unclear: hardware-only vs hardware+cloud vs full annual — state explicitly.
+
+Extra numerical fixes needed (from consistency audit, folds into above):
+
+98.2% discard stat slightly off (~98.24% actual) — minor rounding.
+"prior-24-hour cohort" vs "7-day rolling window" — contradiction, reconcile (counts under #5).
+
+
+
+#
+##
+(neuralicu-fix) C:\Users\ASUS\Documents\Drive\Research paper\NeuralLCU\Dataset\Model train with demo>python inspect_checkpoints.py
+
+=== neuralicu_centralized.pt ===
+  Total parameters/buffers: 88
+  First 10 keys:
+    tcn.0.conv1.weight  -> shape (32, 12, 3)
+    tcn.0.conv1.bias  -> shape (32,)
+    tcn.0.conv2.weight  -> shape (32, 32, 3)
+    tcn.0.conv2.bias  -> shape (32,)
+    tcn.0.bn1.weight  -> shape (32,)
+    tcn.0.bn1.bias  -> shape (32,)
+    tcn.0.bn1.running_mean  -> shape (32,)
+    tcn.0.bn1.running_var  -> shape (32,)
+    tcn.0.bn1.num_batches_tracked  -> shape ()
+    tcn.0.bn2.weight  -> shape (32,)
+
+  --> Fingerprint match:
+      NeuralICUModel (TCN + Transformer) -- matches generate_case_trajectories.py's architecture
+
+=== neuralicu_federated.pt ===
+  Total parameters/buffers: 88
+  First 10 keys:
+    tcn.0.conv1.weight  -> shape (32, 12, 3)
+    tcn.0.conv1.bias  -> shape (32,)
+    tcn.0.conv2.weight  -> shape (32, 32, 3)
+    tcn.0.conv2.bias  -> shape (32,)
+    tcn.0.bn1.weight  -> shape (32,)
+    tcn.0.bn1.bias  -> shape (32,)
+    tcn.0.bn1.running_mean  -> shape (32,)
+    tcn.0.bn1.running_var  -> shape (32,)
+    tcn.0.bn1.num_batches_tracked  -> shape ()
+    tcn.0.bn2.weight  -> shape (32,)
+
+  --> Fingerprint match:
+      NeuralICUModel (TCN + Transformer) -- matches generate_case_trajectories.py's architecture
+(neuralicu-fix) C:\Users\ASUS\Documents\Drive\Research paper\NeuralLCU\Dataset\Model train with demo>python compare_checkpoints.py
+Same 88 parameter keys in both checkpoints. Comparing values...
+
+Identical layers: 0
+Different layers: 88
+
+============================================================
+RESULT: The two checkpoints have DIFFERENT weights.
+This means they came from two separate training runs of the
+SAME architecture -- e.g. two different random seeds, or two
+different training configurations -- but NOT from any federated
+multi-client aggregation process (no such code exists in the project).
+============================================================
+
+Top 10 layers with largest differences (by max abs diff):
+  tcn.0.bn1.num_batches_tracked            max_diff=1498.000000  mean_diff=1498.000000
+  tcn.0.bn2.num_batches_tracked            max_diff=1498.000000  mean_diff=1498.000000
+  tcn.1.bn1.num_batches_tracked            max_diff=1498.000000  mean_diff=1498.000000
+  tcn.1.bn2.num_batches_tracked            max_diff=1498.000000  mean_diff=1498.000000
+  tcn.2.bn1.num_batches_tracked            max_diff=1498.000000  mean_diff=1498.000000
+  tcn.2.bn2.num_batches_tracked            max_diff=1498.000000  mean_diff=1498.000000
+  tcn.3.bn1.num_batches_tracked            max_diff=1498.000000  mean_diff=1498.000000
+  tcn.3.bn2.num_batches_tracked            max_diff=1498.000000  mean_diff=1498.000000
+  tcn.3.bn1.running_var                    max_diff=4.515752  mean_diff=1.679587
+  tcn.3.bn1.running_mean                   max_diff=2.495913  mean_diff=0.638182
+
+Overall: largest single-weight difference = 1498.000000, average difference across differing layers = 136.365664
+These differences are substantial -- these are genuinely two different trained models (different seed and/or different data/config).
+
+
+
+
+
+I am working these only by using 2019 data sheet 40,336-patient 6-hour sepsis-warning model prediction.
+Split locked: 28235 train / 6050 val / 6051 test patients (40336 total)
+Building windows (12h input, 6h horizon)
+Built 1070874 windows from 40336 patients
+Assembling train/val/test tensors...
+Train windows: 748287  Val: 158101  Test: 164486
+Positive rate — train: 0.0280, test: 0.0285
+Device for torch models: cuda
+
+=== logistic_regression ===
+logistic_regression:   0%|                                                                      | 0/25 [00:00<?, ?it/s]  seed 1000: AUROC = 0.6823
+logistic_regression:   4%|██▍                                                           | 1/25 [00:26<10:35, 26.49s/it]  seed 1001: AUROC = 0.6823
+logistic_regression:   8%|████▉                                                         | 2/25 [00:50<09:41, 25.27s/it]  seed 1002: AUROC = 0.6823
+logistic_regression:  12%|███████▍                                                      | 3/25 [01:14<08:57, 24.41s/it]  seed 1003: AUROC = 0.6823
+logistic_regression:  16%|█████████▉                                                    | 4/25 [01:37<08:26, 24.10s/it]  seed 1004: AUROC = 0.6823
+logistic_regression:  20%|████████████▍                                                 | 5/25 [02:01<07:58, 23.93s/it]  seed 1005: AUROC = 0.6823
+logistic_regression:  24%|██████████████▉                                               | 6/25 [02:25<07:33, 23.88s/it]  seed 1006: AUROC = 0.6823
+logistic_regression:  28%|█████████████████▎                                            | 7/25 [02:48<07:08, 23.80s/it]  seed 1007: AUROC = 0.6823
+logistic_regression:  32%|███████████████████▊                                          | 8/25 [03:12<06:42, 23.71s/it]  seed 1008: AUROC = 0.6823
+logistic_regression:  36%|██████████████████████▎                                       | 9/25 [03:36<06:18, 23.68s/it]  seed 1009: AUROC = 0.6823
+logistic_regression:  40%|████████████████████████▍                                    | 10/25 [04:01<06:01, 24.12s/it]  seed 1010: AUROC = 0.6823
+logistic_regression:  44%|██████████████████████████▊                                  | 11/25 [04:25<05:38, 24.15s/it]  seed 1011: AUROC = 0.6823
+logistic_regression:  48%|█████████████████████████████▎                               | 12/25 [04:48<05:08, 23.69s/it]  seed 1012: AUROC = 0.6823
+logistic_regression:  52%|███████████████████████████████▋                             | 13/25 [05:10<04:39, 23.32s/it]  seed 1013: AUROC = 0.6823
+logistic_regression:  56%|██████████████████████████████████▏                          | 14/25 [05:33<04:13, 23.07s/it]  seed 1014: AUROC = 0.6823
+logistic_regression:  60%|████████████████████████████████████▌                        | 15/25 [05:55<03:49, 22.92s/it]  seed 1015: AUROC = 0.6823
+logistic_regression:  64%|███████████████████████████████████████                      | 16/25 [06:18<03:25, 22.82s/it]  seed 1016: AUROC = 0.6823
+logistic_regression:  68%|█████████████████████████████████████████▍                   | 17/25 [06:40<03:01, 22.70s/it]  seed 1017: AUROC = 0.6823
+logistic_regression:  72%|███████████████████████████████████████████▉                 | 18/25 [07:03<02:38, 22.68s/it]  seed 1018: AUROC = 0.6823
+logistic_regression:  76%|██████████████████████████████████████████████▎              | 19/25 [07:25<02:15, 22.64s/it]  seed 1019: AUROC = 0.6823
+logistic_regression:  80%|████████████████████████████████████████████████▊            | 20/25 [07:48<01:52, 22.59s/it]  seed 1020: AUROC = 0.6823
+logistic_regression:  84%|███████████████████████████████████████████████████▏         | 21/25 [08:10<01:30, 22.58s/it]  seed 1021: AUROC = 0.6823
+logistic_regression:  88%|█████████████████████████████████████████████████████▋       | 22/25 [08:33<01:08, 22.76s/it]  seed 1022: AUROC = 0.6823
+logistic_regression:  92%|████████████████████████████████████████████████████████     | 23/25 [08:57<00:46, 23.01s/it]  seed 1023: AUROC = 0.6823
+logistic_regression:  96%|██████████████████████████████████████████████████████████▌  | 24/25 [09:20<00:23, 23.12s/it]  seed 1024: AUROC = 0.6823
+logistic_regression: 100%|█████████████████████████████████████████████████████████████| 25/25 [09:44<00:00, 23.37s/it]
+Checkpoint saved -> outputs/all_model_seed_results_physionet2019.csv
+
+=== xgboost ===
+xgboost:   0%|                                                                                  | 0/25 [00:00<?, ?it/s]  seed 1000: AUROC = 0.7496
+xgboost:   4%|██▉                                                                       | 1/25 [00:43<17:20, 43.36s/it]  seed 1001: AUROC = 0.7511
+xgboost:   8%|█████▉                                                                    | 2/25 [01:27<16:51, 43.99s/it]  seed 1002: AUROC = 0.7515
+xgboost:  12%|████████▉                                                                 | 3/25 [02:12<16:12, 44.20s/it]  seed 1003: AUROC = 0.7491
+xgboost:  16%|███████████▊                                                              | 4/25 [02:56<15:27, 44.15s/it]  seed 1004: AUROC = 0.7499
+xgboost:  20%|██████████████▊                                                           | 5/25 [03:41<14:49, 44.46s/it]  seed 1005: AUROC = 0.7492
+xgboost:  24%|█████████████████▊                                                        | 6/25 [04:26<14:09, 44.69s/it]  seed 1006: AUROC = 0.7509
+xgboost:  28%|████████████████████▋                                                     | 7/25 [05:10<13:23, 44.61s/it]  seed 1007: AUROC = 0.7501
+xgboost:  32%|███████████████████████▋                                                  | 8/25 [05:56<12:41, 44.77s/it]  seed 1008: AUROC = 0.7502
+xgboost:  36%|██████████████████████████▋                                               | 9/25 [06:40<11:55, 44.71s/it]  seed 1009: AUROC = 0.7488
+xgboost:  40%|█████████████████████████████▏                                           | 10/25 [07:25<11:11, 44.79s/it]  seed 1010: AUROC = 0.7484
+xgboost:  44%|████████████████████████████████                                         | 11/25 [08:09<10:25, 44.65s/it]  seed 1011: AUROC = 0.7505
+xgboost:  48%|███████████████████████████████████                                      | 12/25 [08:54<09:40, 44.69s/it]  seed 1012: AUROC = 0.7493
+xgboost:  52%|█████████████████████████████████████▉                                   | 13/25 [09:39<08:56, 44.68s/it]  seed 1013: AUROC = 0.7501
+xgboost:  56%|████████████████████████████████████████▉                                | 14/25 [10:24<08:12, 44.74s/it]  seed 1014: AUROC = 0.7495
+xgboost:  60%|███████████████████████████████████████████▊                             | 15/25 [11:08<07:26, 44.65s/it]  seed 1015: AUROC = 0.7494
+xgboost:  64%|██████████████████████████████████████████████▋                          | 16/25 [11:54<06:44, 44.89s/it]  seed 1016: AUROC = 0.7482
+xgboost:  68%|█████████████████████████████████████████████████▋                       | 17/25 [12:39<05:59, 44.92s/it]  seed 1017: AUROC = 0.7496
+xgboost:  72%|████████████████████████████████████████████████████▌                    | 18/25 [13:23<05:13, 44.83s/it]  seed 1018: AUROC = 0.7483
+xgboost:  76%|███████████████████████████████████████████████████████▍                 | 19/25 [14:08<04:28, 44.70s/it]  seed 1019: AUROC = 0.7491
+xgboost:  80%|██████████████████████████████████████████████████████████▍              | 20/25 [14:52<03:43, 44.70s/it]  seed 1020: AUROC = 0.7493
+xgboost:  84%|█████████████████████████████████████████████████████████████▎           | 21/25 [15:37<02:59, 44.79s/it]  seed 1021: AUROC = 0.7489
+xgboost:  88%|████████████████████████████████████████████████████████████████▏        | 22/25 [16:22<02:14, 44.78s/it]  seed 1022: AUROC = 0.7494
+xgboost:  92%|███████████████████████████████████████████████████████████████████▏     | 23/25 [17:07<01:29, 44.79s/it]  seed 1023: AUROC = 0.7510
+xgboost:  96%|██████████████████████████████████████████████████████████████████████   | 24/25 [17:51<00:44, 44.72s/it]  seed 1024: AUROC = 0.7524
+xgboost: 100%|█████████████████████████████████████████████████████████████████████████| 25/25 [18:36<00:00, 44.67s/it]
+Checkpoint saved -> outputs/all_model_seed_results_physionet2019.csv
+
+=== random_forest ===
+random_forest:   0%|                                                                            | 0/25 [00:00<?, ?it/s]  seed 1000: AUROC = 0.7241
+random_forest:   4%|██▌                                                              | 1/25 [07:26<2:58:40, 446.69s/it]  seed 1001: AUROC = 0.7233
+random_forest:   8%|█████▏                                                           | 2/25 [14:44<2:49:10, 441.35s/it]  seed 1002: AUROC = 0.7242
+random_forest:  12%|███████▊                                                         | 3/25 [22:01<2:41:06, 439.39s/it]  seed 1003: AUROC = 0.7238
+random_forest:  16%|██████████▍                                                      | 4/25 [29:17<2:33:22, 438.22s/it]  seed 1004: AUROC = 0.7237
+random_forest:  20%|█████████████                                                    | 5/25 [36:35<2:25:57, 437.89s/it]  seed 1005: AUROC = 0.7235
+random_forest:  24%|███████████████▌                                                 | 6/25 [43:52<2:18:35, 437.64s/it]  seed 1006: AUROC = 0.7225
+random_forest:  28%|██████████████████▏                                              | 7/25 [51:07<2:11:05, 436.98s/it]  seed 1007: AUROC = 0.7229
+random_forest:  32%|████████████████████▊                                            | 8/25 [58:25<2:03:49, 437.03s/it]  seed 1008: AUROC = 0.7232
+random_forest:  36%|██████████████████████▎                                       | 9/25 [2:34:47<9:22:08, 2108.03s/it]  seed 1009: AUROC = 0.7233
+random_forest:  40%|████████████████████████▍                                    | 10/25 [2:42:05<6:38:07, 1592.47s/it]  seed 1010: AUROC = 0.7227
+random_forest:  44%|██████████████████████████▊                                  | 11/25 [2:49:21<4:48:59, 1238.52s/it]  seed 1011: AUROC = 0.7230
+random_forest:  48%|█████████████████████████████▊                                | 12/25 [2:56:36<3:35:23, 994.11s/it]  seed 1012: AUROC = 0.7227
+random_forest:  52%|████████████████████████████████▏                             | 13/25 [3:03:51<2:44:59, 824.92s/it]  seed 1013: AUROC = 0.7238
+random_forest:  56%|██████████████████████████████████▋                           | 14/25 [3:11:05<2:09:34, 706.79s/it]  seed 1014: AUROC = 0.7240
+random_forest:  60%|█████████████████████████████████████▏                        | 15/25 [3:18:21<1:44:09, 624.98s/it]  seed 1015: AUROC = 0.7232
+random_forest:  64%|███████████████████████████████████████▋                      | 16/25 [3:25:37<1:25:13, 568.20s/it]  seed 1016: AUROC = 0.7231
+random_forest:  68%|██████████████████████████████████████████▏                   | 17/25 [3:33:28<1:11:51, 538.97s/it]  seed 1017: AUROC = 0.7233
+random_forest:  72%|████████████████████████████████████████████▋                 | 18/25 [3:41:25<1:00:41, 520.26s/it]  seed 1018: AUROC = 0.7236
+random_forest:  76%|████████████████████████████████████████████████▋               | 19/25 [3:48:53<49:51, 498.65s/it]  seed 1019: AUROC = 0.7236
+random_forest:  80%|███████████████████████████████████████████████████▏            | 20/25 [3:56:08<39:57, 479.52s/it]  seed 1020: AUROC = 0.7236
+random_forest:  84%|█████████████████████████████████████████████████████▊          | 21/25 [4:03:27<31:09, 467.40s/it]  seed 1021: AUROC = 0.7227
+random_forest:  88%|████████████████████████████████████████████████████████▎       | 22/25 [4:10:43<22:54, 458.03s/it]  seed 1022: AUROC = 0.7241
+random_forest:  92%|██████████████████████████████████████████████████████████▉     | 23/25 [4:18:06<15:06, 453.33s/it]  seed 1023: AUROC = 0.7237
+random_forest:  96%|█████████████████████████████████████████████████████████████▍  | 24/25 [4:25:23<07:28, 448.56s/it]  seed 1024: AUROC = 0.7233
+random_forest: 100%|████████████████████████████████████████████████████████████████| 25/25 [4:32:41<00:00, 654.45s/it]
+Checkpoint saved -> outputs/all_model_seed_results_physionet2019.csv
+
+=== gru_d ===
+gru_d:   0%|                                                                                    | 0/25 [00:00<?, ?it/s]  seed 1000: AUROC = 0.7179
+gru_d:   4%|██▉                                                                      | 1/25 [09:23<3:45:17, 563.22s/it]  seed 1001: AUROC = 0.7048
+gru_d:   8%|█████▊                                                                   | 2/25 [17:55<3:24:28, 533.40s/it]  seed 1002: AUROC = 0.7083
+gru_d:  12%|████████▊                                                                | 3/25 [27:10<3:19:11, 543.27s/it]  seed 1003: AUROC = 0.7015
+gru_d:  16%|███████████▋                                                             | 4/25 [35:36<3:04:55, 528.34s/it]  seed 1004: AUROC = 0.7058
+gru_d:  20%|██████████████▌                                                          | 5/25 [45:36<3:04:45, 554.25s/it]  seed 1005: AUROC = 0.7095
+gru_d:  24%|█████████████████▌                                                       | 6/25 [54:48<2:55:19, 553.68s/it]  seed 1006: AUROC = 0.7150
+gru_d:  28%|███████████████████▉                                                   | 7/25 [1:04:03<2:46:11, 553.99s/it]  seed 1007: AUROC = 0.7110
+gru_d:  32%|██████████████████████▋                                                | 8/25 [1:12:27<2:32:26, 538.01s/it]  seed 1008: AUROC = 0.7021
+gru_d:  36%|█████████████████████████▌                                             | 9/25 [1:22:18<2:27:53, 554.61s/it]  seed 1009: AUROC = 0.7016
+gru_d:  40%|████████████████████████████                                          | 10/25 [1:32:07<2:21:18, 565.21s/it]  seed 1010: AUROC = 0.7071
+gru_d:  44%|██████████████████████████████▊                                       | 11/25 [1:41:17<2:10:47, 560.57s/it]  seed 1011: AUROC = 0.7039
+gru_d:  48%|█████████████████████████████████▌                                    | 12/25 [1:49:39<1:57:37, 542.90s/it]  seed 1012: AUROC = 0.7144
+gru_d:  52%|████████████████████████████████████▍                                 | 13/25 [1:59:43<1:52:14, 561.21s/it]  seed 1013: AUROC = 0.7007
+gru_d:  56%|███████████████████████████████████████▏                              | 14/25 [2:09:12<1:43:19, 563.56s/it]  seed 1014: AUROC = 0.7031
+gru_d:  60%|██████████████████████████████████████████                            | 15/25 [2:19:41<1:37:14, 583.44s/it]  seed 1015: AUROC = 0.7144
+gru_d:  64%|████████████████████████████████████████████▊                         | 16/25 [2:30:50<1:31:20, 608.96s/it]  seed 1016: AUROC = 0.6984
+gru_d:  68%|███████████████████████████████████████████████▌                      | 17/25 [2:41:26<1:22:16, 617.12s/it]  seed 1017: AUROC = 0.7147
+gru_d:  72%|██████████████████████████████████████████████████▍                   | 18/25 [2:52:53<1:14:27, 638.24s/it]  seed 1018: AUROC = 0.7083
+gru_d:  76%|█████████████████████████████████████████████████████▏                | 19/25 [3:03:53<1:04:28, 644.70s/it]  seed 1019: AUROC = 0.7105
+gru_d:  80%|█████████████████████████████████████████████████████████▌              | 20/25 [3:17:56<58:41, 704.22s/it]  seed 1020: AUROC = 0.7034
+gru_d:  84%|█████████████████████████████████████████████████████████▉           | 21/25 [4:05:24<1:29:50, 1347.73s/it]  seed 1021: AUROC = 0.7088
+gru_d:  88%|██████████████████████████████████████████████████████████████▍        | 22/25 [4:18:12<58:41, 1173.89s/it]  seed 1022: AUROC = 0.6914
+gru_d:  92%|█████████████████████████████████████████████████████████████████▎     | 23/25 [4:28:26<33:31, 1005.66s/it]  seed 1023: AUROC = 0.7091
+gru_d:  96%|█████████████████████████████████████████████████████████████████████   | 24/25 [4:37:50<14:33, 873.26s/it]  seed 1024: AUROC = 0.7100
+gru_d: 100%|████████████████████████████████████████████████████████████████████████| 25/25 [4:47:14<00:00, 689.37s/it]
+Checkpoint saved -> outputs/all_model_seed_results_physionet2019.csv
+  Chart saved -> outputs/figures\gru_d_AUROC_20260821_235041.png
+  Per-seed CSV saved -> outputs/figures\gru_d_AUROC_20260821_235041.csv
+
+=== tcn_only ===
+tcn_only:   0%|                                                                                 | 0/25 [00:00<?, ?it/s]  seed 1000: AUROC = 0.7294
+tcn_only:   4%|██▊                                                                   | 1/25 [13:57<5:34:52, 837.20s/it]  seed 1001: AUROC = 0.7370
+tcn_only:   8%|█████▌                                                                | 2/25 [29:03<5:36:37, 878.14s/it]  seed 1002: AUROC = 0.7334
+tcn_only:  12%|████████▍                                                             | 3/25 [46:45<5:52:43, 961.96s/it]  seed 1003: AUROC = 0.7110
+tcn_only:  16%|██████████▋                                                        | 4/25 [1:10:28<6:40:25, 1144.05s/it]  seed 1004: AUROC = 0.7235
+tcn_only:  20%|█████████████▍                                                     | 5/25 [1:31:06<6:32:36, 1177.80s/it]  seed 1005: AUROC = 0.7307
+tcn_only:  24%|████████████████                                                   | 6/25 [1:47:58<5:55:09, 1121.53s/it]  seed 1006: AUROC = 0.7346
+tcn_only:  28%|██████████████████▊                                                | 7/25 [2:05:00<5:26:37, 1088.77s/it]  seed 1007: AUROC = 0.7289
+tcn_only:  32%|█████████████████████▍                                             | 8/25 [2:22:18<5:03:57, 1072.80s/it]  seed 1008: AUROC = 0.7298
+tcn_only:  36%|████████████████████████                                           | 9/25 [2:37:15<4:31:25, 1017.86s/it]  seed 1009: AUROC = 0.7278
+tcn_only:  40%|██████████████████████████▍                                       | 10/25 [2:53:59<4:13:20, 1013.37s/it]  seed 1010: AUROC = 0.7347
+tcn_only:  44%|█████████████████████████████▍                                     | 11/25 [3:09:11<3:49:12, 982.32s/it]  seed 1011: AUROC = 0.7360
+tcn_only:  48%|████████████████████████████████▏                                  | 12/25 [3:23:23<3:24:14, 942.68s/it]  seed 1012: AUROC = 0.7387
+tcn_only:  52%|██████████████████████████████████▊                                | 13/25 [3:38:40<3:07:01, 935.09s/it]  seed 1013: AUROC = 0.7422
+tcn_only:  56%|█████████████████████████████████████▌                             | 14/25 [3:52:46<2:46:28, 908.02s/it]  seed 1014: AUROC = 0.7299
+tcn_only:  60%|████████████████████████████████████████▏                          | 15/25 [4:07:43<2:30:48, 904.88s/it]  seed 1015: AUROC = 0.7314
+tcn_only:  64%|██████████████████████████████████████████▉                        | 16/25 [4:23:11<2:16:46, 911.88s/it]  seed 1016: AUROC = 0.7343
+tcn_only:  68%|█████████████████████████████████████████████▌                     | 17/25 [4:39:50<2:05:02, 937.84s/it]  seed 1017: AUROC = 0.7238
+tcn_only:  72%|████████████████████████████████████████████████▏                  | 18/25 [4:58:02<1:54:50, 984.36s/it]  seed 1018: AUROC = 0.7277
+tcn_only:  76%|██████████████████████████████████████████████████▉                | 19/25 [5:12:40<1:35:13, 952.27s/it]  seed 1019: AUROC = 0.7254
+tcn_only:  80%|█████████████████████████████████████████████████████▌             | 20/25 [5:25:57<1:15:28, 905.64s/it]  seed 1020: AUROC = 0.7301
+tcn_only:  84%|█████████████████████████████████████████████████████████▉           | 21/25 [5:39:14<58:12, 873.19s/it]  seed 1021: AUROC = 0.7316
+tcn_only:  88%|████████████████████████████████████████████████████████████▋        | 22/25 [5:53:43<43:35, 871.82s/it]  seed 1022: AUROC = 0.7207
+tcn_only:  92%|███████████████████████████████████████████████████████████████▍     | 23/25 [6:08:11<29:01, 870.65s/it]  seed 1023: AUROC = 0.7275
+tcn_only:  96%|██████████████████████████████████████████████████████████████████▏  | 24/25 [6:22:34<14:28, 868.44s/it]  seed 1024: AUROC = 0.7288
+tcn_only: 100%|█████████████████████████████████████████████████████████████████████| 25/25 [6:35:43<00:00, 949.76s/it]
+Checkpoint saved -> outputs/all_model_seed_results_physionet2019.csv
+  Chart saved -> outputs/figures\tcn_only_AUROC_20260822_062625.png
+  Per-seed CSV saved -> outputs/figures\tcn_only_AUROC_20260822_062625.csv
+
+(neuralicu-fix) C:\Users\ASUS\Documents\Drive\Research paper\NeuralLCU\Dataset>python -c "import pandas as pd; from config_physionet2019 import DATA; df = pd.read_csv(f\"{DATA['output_dir']}/all_model_seed_results_physionet2019.csv\"); print(df.columns.tolist()); print(df.head(10).to_string())"
+['model', 'seed', 'auroc']
+                 model  seed     auroc
+0  logistic_regression  1000  0.682325
+1  logistic_regression  1001  0.682325
+2  logistic_regression  1002  0.682325
+3  logistic_regression  1003  0.682325
+4  logistic_regression  1004  0.682325
+5  logistic_regression  1005  0.682325
+6  logistic_regression  1006  0.682325
+7  logistic_regression  1007  0.682325
+8  logistic_regression  1008  0.682325
+9  logistic_regression  1009  0.682325
+
+(neuralicu-fix) C:\Users\ASUS\Documents\Drive\Research paper\NeuralLCU\Dataset>type config_physionet2019.py
+"""
+Alternate config: uses PhysioNet 2019 Sepsis Challenge data for
+EVERY model (not just XGBoost). This needs no new credentialing ΓÇö
+you already have access to this dataset. It fixes Critical Issue #4
+(cross-dataset baseline) by putting all 7 models on one dataset, and
+helps Critical Issue #1 (instability) since n=40,336 vs n=100.
+
+PhysioNet 2019 format: one .psv (pipe-separated) file per patient,
+hourly rows, columns already include a per-hour SepsisLabel.
+Download: https://physionet.org/content/challenge-2019/1.0.0/
+(training_setA + training_setB, no CITI course required for this one).
+"""
+
+import os
+
+DATA = {
+    # Merged PhysioNet 2019 CSV (Patient_ID, Hour, 33 clinical columns,
+    # SepsisLabel) ΓÇö this is the 40,336-patient dataset.
+    "dataset_csv": os.environ.get(
+        "NEURALICU_DATASET_CSV", os.path.join("data", "Dataset.csv")
+    ),
+    "output_dir": os.environ.get("NEURALICU_OUTPUT_DIR", "outputs"),
+}
+
+# ---------------------------------------------------------------------
+# CHANNEL MAPPING ΓÇö PhysioNet 2019 columns are NOT identical to the
+# paper's original 14 MIMIC-derived channels. GCS and urine output are
+# not present in this dataset. Mapped to 12 available channels; state
+# this explicitly in the paper as a channel-availability limitation
+# (ties into the existing graceful-degradation / LMIC argument).
+# ---------------------------------------------------------------------
+RAW_CHANNELS = [
+    "HR",           # heart rate
+    "O2Sat",        # SpO2
+    "Temp",         # temperature
+    "SBP",          # systolic BP
+    "DBP",          # diastolic BP
+    "MAP",          # mean arterial pressure
+    "Resp",         # respiratory rate
+    "WBC",          # white blood cell count
+    "Lactate",      # serum lactate
+    "Creatinine",   # creatinine
+    "Platelets",    # platelet count
+    "Bilirubin_total",  # total bilirubin
+]
+# Dropped vs. original 14: GCS, urine_output -- not present in this dataset.
+DROPPED_CHANNELS_NOTE = (
+    "GCS and urine output are not columns in the PhysioNet 2019 "
+    "Challenge dataset and are excluded from this comparison. Report "
+    "this explicitly as a dataset-availability limitation, not a "
+    "silent change from the original 14-channel design."
+)
+
+LABEL_CONFIG = {
+    "input_window_hours": 12,
+    "prediction_horizon_hours": 6,
+    "sepsis_label_column": "SepsisLabel",  # already provided per-hour by the Challenge
+}
+
+MODEL_LIST = [
+    "logistic_regression",
+    "xgboost",
+    "random_forest",
+    "gru_d",
+    "tcn_only",
+    "transformer_only",
+    "tcn_transformer",
+]
+
+SEED_CONFIG = {
+    "n_seeds": 25,
+    "seeds": list(range(1000, 1025)),
+    "bootstrap_resamples": 1000,
+    "confidence_level": 0.95,
+}
+
+SPLIT_CONFIG = {
+    "train_frac": 0.70,
+    "val_frac": 0.15,
+    "test_frac": 0.15,
+    "split_seed": 42,
+    "split_manifest_path": os.path.join(
+        DATA["output_dir"], "patient_split_physionet2019.json"
+    ),
+}
+
+TRAIN_CONFIG = {
+    "optimizer": "adamw",
+    "learning_rate": 1e-3,
+    "weight_decay": 1e-4,
+    "batch_size": 64,   # can go larger ΓÇö much more data than MIMIC Demo
+    "max_epochs": 100,
+    "early_stopping_patience": 10,
+    "early_stopping_metric": "val_auroc",
+    "class_weighting": "inverse_frequency",
+    "gradient_clip_norm": 1.0,
+}
+(neuralicu-fix) C:\Users\ASUS\Documents\Drive\Research paper\NeuralLCU\Dataset>python -c "import pandas as pd; from config_physionet2019 import DATA; df = pd.read_csv(f\"{DATA['output_dir']}/all_model_seed_results_physionet2019.csv\"); print(df.groupby('model')['seed'].agg(['count','nunique'])); print(); print(df.groupby('model')['auroc'].agg(['mean','std','min','max']))"
+                     count  nunique
+model
+gru_d                   25       25
+logistic_regression     25       25
+random_forest           25       25
+tcn_only                25       25
+tcn_transformer         25       25
+transformer_only        25       25
+xgboost                 25       25
+
+                         mean       std       min       max
+model
+gru_d                0.707030  0.006106  0.691363  0.717925
+logistic_regression  0.682325  0.000000  0.682325  0.682325
+random_forest        0.723396  0.000473  0.722489  0.724176
+tcn_only             0.729963  0.006317  0.710967  0.742166
+tcn_transformer      0.723371  0.009269  0.704564  0.738604
+transformer_only     0.637234  0.087954  0.491092  0.708442
+xgboost              0.749752  0.001036  0.748188  0.752441
+
+(neuralicu-fix) C:\Users\ASUS\Documents\Drive\Research paper\NeuralLCU\Dataset>findstr /s /i /n "proposed" *.py
+models.py:145:    """The full proposed model ΓÇö TCN encoder feeding a 4-head attention block."""
+stats_analysis_physionet2019 (1).py:11:from stats_analysis import summarize_per_model, paired_significance_vs_proposed
+stats_analysis_physionet2019 (1).py:25:    sig = paired_significance_vs_proposed(results_df)
+stats_analysis_physionet2019 (1).py:26:    sig_path = f"{DATA['output_dir']}/significance_vs_proposed_physionet2019.csv"
+stats_analysis_physionet2019 (1).py:28:    print("\nSignificance vs proposed model:")
+stats_analysis_physionet2019.py:11:from stats_analysis import summarize_per_model, paired_significance_vs_proposed
+stats_analysis_physionet2019.py:25:    sig = paired_significance_vs_proposed(results_df)
+stats_analysis_physionet2019.py:26:    sig_path = f"{DATA['output_dir']}/significance_vs_proposed_physionet2019.csv"
+stats_analysis_physionet2019.py:28:    print("\nSignificance vs proposed model:")
+
+(neuralicu-fix) C:\Users\ASUS\Documents\Drive\Research paper\NeuralLCU\Dataset>findstr /n "proposed\|full_model\|NeuralLCU\|model_name" run_ablations.py models.py train_eval_physionet2019.py
+
+(neuralicu-fix) C:\Users\ASUS\Documents\Drive\Research paper\NeuralLCU\Dataset>python stats_analysis_physionet2019.py
+Per-model summary:
+              model  n_seeds  mean_auroc  std_auroc  sem_auroc  ci95_lower  ci95_upper  min_auroc  max_auroc
+            xgboost       25    0.749752   0.001036   0.000207    0.749325    0.750180   0.748188   0.752441
+           tcn_only       25    0.729963   0.006317   0.001263    0.727356    0.732571   0.710967   0.742166
+      random_forest       25    0.723396   0.000473   0.000095    0.723201    0.723591   0.722489   0.724176
+    tcn_transformer       25    0.723371   0.009269   0.001854    0.719545    0.727197   0.704564   0.738604
+              gru_d       25    0.707030   0.006106   0.001221    0.704510    0.709550   0.691363   0.717925
+logistic_regression       25    0.682325   0.000000   0.000000    0.682325    0.682325   0.682325   0.682325
+   transformer_only       25    0.637234   0.087954   0.017591    0.600929    0.673540   0.491092   0.708442
+
+Saved -> outputs/model_summary_table_physionet2019.csv
+
+Significance vs proposed model:
+     baseline_model  n_paired_seeds  mean_diff_proposed_minus_baseline  std_diff     t_stat     t_pvalue  wilcoxon_stat  wilcoxon_pvalue  significant_at_0.05  proposed_wins
+   transformer_only              25                           0.086137  0.089322   4.821712 6.535020e-05            0.0     5.960464e-08                 True           True
+logistic_regression              25                           0.041047  0.009269  22.142924 1.756789e-17            0.0     5.960464e-08                 True           True
+              gru_d              25                           0.016341  0.012096   6.754918 5.492064e-07           10.0     2.563000e-06                 True           True
+      random_forest              25                          -0.000025  0.009390  -0.013179 9.895936e-01          157.0     8.948604e-01                False          False
+           tcn_only              25                          -0.006592  0.011485  -2.869990 8.433585e-03           65.0     7.370949e-03                 True          False
+            xgboost              25                          -0.026381  0.009737 -13.547462 9.756848e-13            0.0     5.960464e-08                 True          False
+
+Saved -> outputs/significance_vs_proposed_physionet2019.csv
+
+(neuralicu-fix) C:\Users\ASUS\Documents\Drive\Research paper\NeuralLCU\Dataset>python stats_analysis.py
+Summary:
+              model  n_seeds  mean_auroc  std_auroc  sem_auroc  ci95_lower  ci95_upper  min_auroc  max_auroc
+            xgboost       25    0.750218   0.000694   0.000139    0.749932    0.750504   0.749160   0.752142
+    tcn_transformer       25    0.722681   0.007480   0.001496    0.719594    0.725769   0.705441   0.734003
+logistic_regression       25    0.682000   0.000000   0.000000    0.682000    0.682000   0.682000   0.682000
+   transformer_only       25    0.625592   0.072959   0.014592    0.595476    0.655708   0.488907   0.768555
+
+Significance vs proposed:
+     baseline_model  n_paired_seeds  mean_diff_proposed_minus_baseline  std_diff     t_stat     t_pvalue  wilcoxon_stat  wilcoxon_pvalue  significant_at_0.05  proposed_wins
+   transformer_only              25                           0.097089  0.074343   6.529820 9.399990e-07            9.0     1.966953e-06                 True           True
+logistic_regression              25                           0.040681  0.007480  27.194122 1.521929e-19            0.0     5.960464e-08                 True           True
+            xgboost              25                          -0.027536  0.007695 -17.892621 2.204901e-15            0.0     5.960464e-08                 True          False
+
+
+(neuralicu-fix) C:\Users\ASUS\Documents\Drive\Research paper\NeuralLCU\Dataset>python build_labeled_features.py
+ICU stays: 136, sepsis-positive: 41 (30.1%)
+Real patients: 99, of which 19 have multiple ICU stays (these MUST stay together in the same split)
+
+Saved hourly_features_labeled.csv: 99 patients, 135 stays, 11905 rows
+
+(neuralicu-fix) C:\Users\ASUS\Documents\Drive\Research paper\NeuralLCU\Dataset>python xgboost_same_cohort.py > outputs\logs\step3a_xgboost_same_cohort.log 2>&1
+
+(neuralicu-fix) C:\Users\ASUS\Documents\Drive\Research paper\NeuralLCU\Dataset>type outputs\logs\step3a_xgboost_same_cohort.log
+Using 12 feature columns: ['DiasBP', 'GCS', 'HeartRate', 'MeanBP', 'RespRate', 'SpO2', 'SysBP', 'Temperature', 'Bilirubin', 'Creatinine', 'Lactate', 'WBC']
+Train: 79 patients, 18 septic (22.8%)
+Test:  20 patients, 8 septic (40.0%)
+
+Train windows: (8686, 144), positive rate: 0.276
+Test windows:  (1620, 144), positive rate: 0.640
+
+=== POINT ESTIMATE ===
+XGBoost AUROC: 0.3144
+XGBoost AUPRC: 0.5570
+Test patients: 18 (8 septic)
+Patient-level bootstrap 95% CI (999 valid resamples): 0.1325-0.7790
+
+
+
+(neuralicu-fix) C:\Users\ASUS\Documents\Drive\Research paper\NeuralLCU\Dataset>type outputs\logs\step3b_run_ablations.log
+Feature columns (12): ['DiasBP', 'GCS', 'HeartRate', 'MeanBP', 'RespRate', 'SpO2', 'SysBP', 'Temperature', 'Bilirubin', 'Creatinine', 'Lactate', 'WBC']
+
+=== Full TCN-Transformer (12hr) ===
+  seed 0: AUROC = 0.7484
+  seed 1: AUROC = 0.9187
+  seed 7: AUROC = 0.4960
+  seed 42: AUROC = 0.1870
+  seed 123: AUROC = 0.5376
+  --> mean 0.5776, std 0.2475, range 0.1870-0.9187
+
+=== TCN-only, no attention (12hr) ===
+  seed 0: AUROC = 0.6942
+  seed 1: AUROC = 0.8594
+  seed 7: AUROC = 0.4961
+  seed 42: AUROC = 0.1451
+  seed 123: AUROC = 0.6421
+  --> mean 0.5674, std 0.2410, range 0.1451-0.8594
+
+=== LSTM baseline (12hr) ===
+  seed 0: AUROC = 0.8637
+  seed 1: AUROC = 0.8948
+  seed 7: AUROC = 0.4793
+  seed 42: AUROC = 0.1978
+  seed 123: AUROC = 0.5496
+  --> mean 0.5970, std 0.2590, range 0.1978-0.8948
+
+=== Full TCN-Transformer (6hr window) ===
+  seed 0: AUROC = 0.7531
+  seed 1: AUROC = 0.8731
+  seed 7: AUROC = 0.4293
+  seed 42: AUROC = 0.2338
+  seed 123: AUROC = 0.5958
+  --> mean 0.5770, std 0.2274, range 0.2338-0.8731
+
+=== Full TCN-Transformer (24hr window) ===
+  seed 0: AUROC = 0.6431
+  seed 1: AUROC = 0.8942
+  seed 7: AUROC = 0.5253
+  seed 42: AUROC = 0.2816
+  seed 123: AUROC = 0.6350
+  --> mean 0.5958, std 0.1983, range 0.2816-0.8942
+
+
+=== SUMMARY TABLE (paste into Table 6) ===
+Variant                                Mean AUROC   Std      Range
+Full TCN-Transformer (12hr)            0.5776       0.2475   0.1870-0.9187
+TCN-only, no attention (12hr)          0.5674       0.2410   0.1451-0.8594
+LSTM baseline (12hr)                   0.5970       0.2590   0.1978-0.8948
+Full TCN-Transformer (6hr window)      0.5770       0.2274   0.2338-0.8731
+Full TCN-Transformer (24hr window)     0.5958       0.1983   0.2816-0.8942
+
+(neuralicu-fix) C:\Users\ASUS\Documents\Drive\Research paper\NeuralLCU\Dataset>type outputs\logs\step3a_xgboost_same_cohort.log
+Using 12 feature columns: ['DiasBP', 'GCS', 'HeartRate', 'MeanBP', 'RespRate', 'SpO2', 'SysBP', 'Temperature', 'Bilirubin', 'Creatinine', 'Lactate', 'WBC']
+Train: 79 patients, 18 septic (22.8%)
+Test:  20 patients, 8 septic (40.0%)
+
+Train windows: (8686, 144), positive rate: 0.276
+Test windows:  (1620, 144), positive rate: 0.640
+
+=== POINT ESTIMATE ===
+XGBoost AUROC: 0.3144
+XGBoost AUPRC: 0.5570
+Test patients: 18 (8 septic)
+Patient-level bootstrap 95% CI (999 valid resamples): 0.1325-0.7790
+
+(neuralicu-fix) C:\Users\ASUS\Documents\Drive\Research paper\NeuralLCU\Dataset>python run_ablations_diagnostic.py > outputs\logs\step3b_diagnostic.log 2>&1
+
+(neuralicu-fix) C:\Users\ASUS\Documents\Drive\Research paper\NeuralLCU\Dataset>type outputs\logs\step3b_diagnostic.log
+Feature columns (12): ['DiasBP', 'GCS', 'HeartRate', 'MeanBP', 'RespRate', 'SpO2', 'SysBP', 'Temperature', 'Bilirubin', 'Creatinine', 'Lactate', 'WBC']
+
+=== Full TCN-Transformer (12hr) ===
+    [Full TCN-Transformer (12hr) seed=0 window=12] train patients=79 (septic=23, 29.1%) | test patients=20 (septic=3, 15.0%)
+    [Full TCN-Transformer (12hr) seed=0 window=12] train windows=8759 (pos rate=0.365) | test windows=1547 (pos rate=0.153)
+    [Full TCN-Transformer (12hr) seed=0] pos_weight used in BCEWithLogitsLoss = 1.736 (train pos=3201, train neg=5558)
+  seed 0: AUROC = 0.7484
+
+    [Full TCN-Transformer (12hr) seed=1 window=12] train patients=79 (septic=23, 29.1%) | test patients=20 (septic=3, 15.0%)
+    [Full TCN-Transformer (12hr) seed=1 window=12] train windows=8916 (pos rate=0.360) | test windows=1390 (pos rate=0.163)
+    [Full TCN-Transformer (12hr) seed=1] pos_weight used in BCEWithLogitsLoss = 1.777 (train pos=3211, train neg=5705)
+  seed 1: AUROC = 0.9187
+
+    [Full TCN-Transformer (12hr) seed=7 window=12] train patients=79 (septic=18, 22.8%) | test patients=20 (septic=8, 40.0%)
+    [Full TCN-Transformer (12hr) seed=7 window=12] train windows=7636 (pos rate=0.235) | test windows=2670 (pos rate=0.614)
+    [Full TCN-Transformer (12hr) seed=7] pos_weight used in BCEWithLogitsLoss = 3.249 (train pos=1797, train neg=5839)
+  seed 7: AUROC = 0.4960
+
+    [Full TCN-Transformer (12hr) seed=42 window=12] train patients=79 (septic=18, 22.8%) | test patients=20 (septic=8, 40.0%)
+    [Full TCN-Transformer (12hr) seed=42 window=12] train windows=8686 (pos rate=0.276) | test windows=1620 (pos rate=0.640)
+    [Full TCN-Transformer (12hr) seed=42] pos_weight used in BCEWithLogitsLoss = 2.618 (train pos=2401, train neg=6285)
+  seed 42: AUROC = 0.1870
+
+    [Full TCN-Transformer (12hr) seed=123 window=12] train patients=79 (septic=21, 26.6%) | test patients=20 (septic=5, 25.0%)
+    [Full TCN-Transformer (12hr) seed=123 window=12] train windows=8550 (pos rate=0.374) | test windows=1756 (pos rate=0.138)
+    [Full TCN-Transformer (12hr) seed=123] pos_weight used in BCEWithLogitsLoss = 1.676 (train pos=3195, train neg=5355)
+  seed 123: AUROC = 0.5376
+
+  --> mean 0.5776, std 0.2475, range 0.1870-0.9187
+
+=== TCN-only, no attention (12hr) ===
+    [TCN-only, no attention (12hr) seed=0 window=12] train patients=79 (septic=23, 29.1%) | test patients=20 (septic=3, 15.0%)
+    [TCN-only, no attention (12hr) seed=0 window=12] train windows=8759 (pos rate=0.365) | test windows=1547 (pos rate=0.153)
+    [TCN-only, no attention (12hr) seed=0] pos_weight used in BCEWithLogitsLoss = 1.736 (train pos=3201, train neg=5558)
+  seed 0: AUROC = 0.6942
+
+    [TCN-only, no attention (12hr) seed=1 window=12] train patients=79 (septic=23, 29.1%) | test patients=20 (septic=3, 15.0%)
+    [TCN-only, no attention (12hr) seed=1 window=12] train windows=8916 (pos rate=0.360) | test windows=1390 (pos rate=0.163)
+    [TCN-only, no attention (12hr) seed=1] pos_weight used in BCEWithLogitsLoss = 1.777 (train pos=3211, train neg=5705)
+  seed 1: AUROC = 0.8594
+
+    [TCN-only, no attention (12hr) seed=7 window=12] train patients=79 (septic=18, 22.8%) | test patients=20 (septic=8, 40.0%)
+    [TCN-only, no attention (12hr) seed=7 window=12] train windows=7636 (pos rate=0.235) | test windows=2670 (pos rate=0.614)
+    [TCN-only, no attention (12hr) seed=7] pos_weight used in BCEWithLogitsLoss = 3.249 (train pos=1797, train neg=5839)
+  seed 7: AUROC = 0.4961
+
+    [TCN-only, no attention (12hr) seed=42 window=12] train patients=79 (septic=18, 22.8%) | test patients=20 (septic=8, 40.0%)
+    [TCN-only, no attention (12hr) seed=42 window=12] train windows=8686 (pos rate=0.276) | test windows=1620 (pos rate=0.640)
+    [TCN-only, no attention (12hr) seed=42] pos_weight used in BCEWithLogitsLoss = 2.618 (train pos=2401, train neg=6285)
+  seed 42: AUROC = 0.1451
+
+    [TCN-only, no attention (12hr) seed=123 window=12] train patients=79 (septic=21, 26.6%) | test patients=20 (septic=5, 25.0%)
+    [TCN-only, no attention (12hr) seed=123 window=12] train windows=8550 (pos rate=0.374) | test windows=1756 (pos rate=0.138)
+    [TCN-only, no attention (12hr) seed=123] pos_weight used in BCEWithLogitsLoss = 1.676 (train pos=3195, train neg=5355)
+  seed 123: AUROC = 0.6421
+
+  --> mean 0.5674, std 0.2410, range 0.1451-0.8594
+
+=== LSTM baseline (12hr) ===
+    [LSTM baseline (12hr) seed=0 window=12] train patients=79 (septic=23, 29.1%) | test patients=20 (septic=3, 15.0%)
+    [LSTM baseline (12hr) seed=0 window=12] train windows=8759 (pos rate=0.365) | test windows=1547 (pos rate=0.153)
+    [LSTM baseline (12hr) seed=0] pos_weight used in BCEWithLogitsLoss = 1.736 (train pos=3201, train neg=5558)
+  seed 0: AUROC = 0.8637
+
+    [LSTM baseline (12hr) seed=1 window=12] train patients=79 (septic=23, 29.1%) | test patients=20 (septic=3, 15.0%)
+    [LSTM baseline (12hr) seed=1 window=12] train windows=8916 (pos rate=0.360) | test windows=1390 (pos rate=0.163)
+    [LSTM baseline (12hr) seed=1] pos_weight used in BCEWithLogitsLoss = 1.777 (train pos=3211, train neg=5705)
+  seed 1: AUROC = 0.8948
+
+    [LSTM baseline (12hr) seed=7 window=12] train patients=79 (septic=18, 22.8%) | test patients=20 (septic=8, 40.0%)
+    [LSTM baseline (12hr) seed=7 window=12] train windows=7636 (pos rate=0.235) | test windows=2670 (pos rate=0.614)
+    [LSTM baseline (12hr) seed=7] pos_weight used in BCEWithLogitsLoss = 3.249 (train pos=1797, train neg=5839)
+  seed 7: AUROC = 0.4793
+
+    [LSTM baseline (12hr) seed=42 window=12] train patients=79 (septic=18, 22.8%) | test patients=20 (septic=8, 40.0%)
+    [LSTM baseline (12hr) seed=42 window=12] train windows=8686 (pos rate=0.276) | test windows=1620 (pos rate=0.640)
+    [LSTM baseline (12hr) seed=42] pos_weight used in BCEWithLogitsLoss = 2.618 (train pos=2401, train neg=6285)
+  seed 42: AUROC = 0.1978
+
+    [LSTM baseline (12hr) seed=123 window=12] train patients=79 (septic=21, 26.6%) | test patients=20 (septic=5, 25.0%)
+    [LSTM baseline (12hr) seed=123 window=12] train windows=8550 (pos rate=0.374) | test windows=1756 (pos rate=0.138)
+    [LSTM baseline (12hr) seed=123] pos_weight used in BCEWithLogitsLoss = 1.676 (train pos=3195, train neg=5355)
+  seed 123: AUROC = 0.5496
+
+  --> mean 0.5970, std 0.2590, range 0.1978-0.8948
+
+=== Full TCN-Transformer (6hr window) ===
+    [Full TCN-Transformer (6hr window) seed=0 window=6] train patients=79 (septic=23, 29.1%) | test patients=20 (septic=3, 15.0%)
+    [Full TCN-Transformer (6hr window) seed=0 window=6] train windows=9411 (pos rate=0.364) | test windows=1690 (pos rate=0.150)
+    [Full TCN-Transformer (6hr window) seed=0] pos_weight used in BCEWithLogitsLoss = 1.746 (train pos=3427, train neg=5984)
+  seed 0: AUROC = 0.7531
+
+    [Full TCN-Transformer (6hr window) seed=1 window=6] train patients=79 (septic=23, 29.1%) | test patients=20 (septic=3, 15.0%)
+    [Full TCN-Transformer (6hr window) seed=1 window=6] train windows=9568 (pos rate=0.359) | test windows=1533 (pos rate=0.159)
+    [Full TCN-Transformer (6hr window) seed=1] pos_weight used in BCEWithLogitsLoss = 1.784 (train pos=3437, train neg=6131)
+  seed 1: AUROC = 0.8731
+
+    [Full TCN-Transformer (6hr window) seed=7 window=6] train patients=79 (septic=18, 22.8%) | test patients=20 (septic=8, 40.0%)
+    [Full TCN-Transformer (6hr window) seed=7 window=6] train windows=8211 (pos rate=0.235) | test windows=2890 (pos rate=0.606)
+    [Full TCN-Transformer (6hr window) seed=7] pos_weight used in BCEWithLogitsLoss = 3.257 (train pos=1929, train neg=6282)
+  seed 7: AUROC = 0.4293
+
+    [Full TCN-Transformer (6hr window) seed=42 window=6] train patients=79 (septic=18, 22.8%) | test patients=20 (septic=8, 40.0%)
+    [Full TCN-Transformer (6hr window) seed=42 window=6] train windows=9337 (pos rate=0.277) | test windows=1764 (pos rate=0.621)
+    [Full TCN-Transformer (6hr window) seed=42] pos_weight used in BCEWithLogitsLoss = 2.612 (train pos=2585, train neg=6752)
+  seed 42: AUROC = 0.2338
+
+    [Full TCN-Transformer (6hr window) seed=123 window=6] train patients=79 (septic=21, 26.6%) | test patients=20 (septic=5, 25.0%)
+    [Full TCN-Transformer (6hr window) seed=123 window=6] train windows=9195 (pos rate=0.369) | test windows=1906 (pos rate=0.149)
+    [Full TCN-Transformer (6hr window) seed=123] pos_weight used in BCEWithLogitsLoss = 1.707 (train pos=3397, train neg=5798)
+  seed 123: AUROC = 0.5958
+
+  --> mean 0.5770, std 0.2274, range 0.2338-0.8731
+
+=== Full TCN-Transformer (24hr window) ===
+    [Full TCN-Transformer (24hr window) seed=0 window=24] train patients=79 (septic=23, 29.1%) | test patients=20 (septic=3, 15.0%)
+    [Full TCN-Transformer (24hr window) seed=0 window=24] train windows=7533 (pos rate=0.372) | test windows=1286 (pos rate=0.156)
+    [Full TCN-Transformer (24hr window) seed=0] pos_weight used in BCEWithLogitsLoss = 1.686 (train pos=2805, train neg=4728)
+  seed 0: AUROC = 0.6431
+
+    [Full TCN-Transformer (24hr window) seed=1 window=24] train patients=79 (septic=23, 29.1%) | test patients=20 (septic=3, 15.0%)
+    [Full TCN-Transformer (24hr window) seed=1 window=24] train windows=7692 (pos rate=0.366) | test windows=1127 (pos rate=0.169)
+    [Full TCN-Transformer (24hr window) seed=1] pos_weight used in BCEWithLogitsLoss = 1.733 (train pos=2815, train neg=4877)
+  seed 1: AUROC = 0.8942
+
+    [Full TCN-Transformer (24hr window) seed=7 window=24] train patients=79 (septic=18, 22.8%) | test patients=20 (septic=8, 40.0%)
+    [Full TCN-Transformer (24hr window) seed=7 window=24] train windows=6551 (pos rate=0.237) | test windows=2268 (pos rate=0.641)
+    [Full TCN-Transformer (24hr window) seed=7] pos_weight used in BCEWithLogitsLoss = 3.224 (train pos=1551, train neg=5000)
+  seed 7: AUROC = 0.5253
+
+    [Full TCN-Transformer (24hr window) seed=42 window=24] train patients=79 (septic=18, 22.8%) | test patients=20 (septic=8, 40.0%)
+    [Full TCN-Transformer (24hr window) seed=42 window=24] train windows=7467 (pos rate=0.278) | test windows=1352 (pos rate=0.686)
+    [Full TCN-Transformer (24hr window) seed=42] pos_weight used in BCEWithLogitsLoss = 2.595 (train pos=2077, train neg=5390)
+  seed 42: AUROC = 0.2816
+
+    [Full TCN-Transformer (24hr window) seed=123 window=24] train patients=79 (septic=21, 26.6%) | test patients=20 (septic=5, 25.0%)
+    [Full TCN-Transformer (24hr window) seed=123 window=24] train windows=7350 (pos rate=0.386) | test windows=1469 (pos rate=0.115)
+    [Full TCN-Transformer (24hr window) seed=123] pos_weight used in BCEWithLogitsLoss = 1.592 (train pos=2836, train neg=4514)
+  seed 123: AUROC = 0.6350
+
+  --> mean 0.5958, std 0.1983, range 0.2816-0.8942
+
+
+=== SUMMARY TABLE (diagnostic run -- do not paste into paper yet) ===
+Variant                                Mean AUROC   Std      Range
+Full TCN-Transformer (12hr)            0.5776       0.2475   0.1870-0.9187
+TCN-only, no attention (12hr)          0.5674       0.2410   0.1451-0.8594
+LSTM baseline (12hr)                   0.5970       0.2590   0.1978-0.8948
+Full TCN-Transformer (6hr window)      0.5770       0.2274   0.2338-0.8731
+Full TCN-Transformer (24hr window)     0.5958       0.1983   0.2816-0.8942
+
+
+
+(neuralicu-fix) C:\Users\ASUS\Documents\Drive\Research paper\NeuralLCU\Dataset>python run_ablations_kfold.py > outputs\logs\step3b_kfold.log 2>&1
+
+(neuralicu-fix) C:\Users\ASUS\Documents\Drive\Research paper\NeuralLCU\Dataset>type outputs\logs\step3b_kfold.log
+Feature columns (12): ['DiasBP', 'GCS', 'HeartRate', 'MeanBP', 'RespRate', 'SpO2', 'SysBP', 'Temperature', 'Bilirubin', 'Creatinine', 'Lactate', 'WBC']
+
+Cohort: 99 patients, 26 ever-septic (26.3%)
+
+=== Full TCN-Transformer (12hr) ===
+  repeat=0 fold=0: train_prev=25.3% test_prev=30.0% AUROC=0.5002
+  repeat=0 fold=1: train_prev=26.6% test_prev=25.0% AUROC=0.4694
+  repeat=0 fold=2: train_prev=26.6% test_prev=25.0% AUROC=0.3318
+  repeat=0 fold=3: train_prev=26.6% test_prev=25.0% AUROC=0.5915
+  repeat=0 fold=4: train_prev=26.2% test_prev=26.3% AUROC=0.2750
+  --> repeat 0 mean: 0.4336
+  repeat=1 fold=0: train_prev=25.3% test_prev=30.0% AUROC=0.6956
+  repeat=1 fold=1: train_prev=26.6% test_prev=25.0% AUROC=0.5833
+  repeat=1 fold=2: train_prev=26.6% test_prev=25.0% AUROC=0.2702
+  repeat=1 fold=3: train_prev=26.6% test_prev=25.0% AUROC=0.1628
+  repeat=1 fold=4: train_prev=26.2% test_prev=26.3% AUROC=0.4399
+  --> repeat 1 mean: 0.4304
+  repeat=7 fold=0: train_prev=25.3% test_prev=30.0% AUROC=0.4143
+  repeat=7 fold=1: train_prev=26.6% test_prev=25.0% AUROC=0.3857
+  repeat=7 fold=2: train_prev=26.6% test_prev=25.0% AUROC=0.7066
+  repeat=7 fold=3: train_prev=26.6% test_prev=25.0% AUROC=0.5019
+  repeat=7 fold=4: train_prev=26.2% test_prev=26.3% AUROC=0.6794
+  --> repeat 7 mean: 0.5376
+  repeat=42 fold=0: train_prev=25.3% test_prev=30.0% AUROC=0.6072
+  repeat=42 fold=1: train_prev=26.6% test_prev=25.0% AUROC=0.6598
+  repeat=42 fold=2: train_prev=26.6% test_prev=25.0% AUROC=0.3890
+  repeat=42 fold=3: train_prev=26.6% test_prev=25.0% AUROC=0.3633
+  repeat=42 fold=4: train_prev=26.2% test_prev=26.3% AUROC=0.6502
+  --> repeat 42 mean: 0.5339
+  repeat=123 fold=0: train_prev=25.3% test_prev=30.0% AUROC=0.4697
+  repeat=123 fold=1: train_prev=26.6% test_prev=25.0% AUROC=0.8064
+  repeat=123 fold=2: train_prev=26.6% test_prev=25.0% AUROC=0.7512
+  repeat=123 fold=3: train_prev=26.6% test_prev=25.0% AUROC=0.5816
+  repeat=123 fold=4: train_prev=26.2% test_prev=26.3% AUROC=0.5642
+  --> repeat 123 mean: 0.6346
+  ==> GRAND mean 0.5140, std 0.1616, n_runs=25, range 0.1628-0.8064
+
+=== TCN-only, no attention (12hr) ===
+  repeat=0 fold=0: train_prev=25.3% test_prev=30.0% AUROC=0.5108
+  repeat=0 fold=1: train_prev=26.6% test_prev=25.0% AUROC=0.4615
+  repeat=0 fold=2: train_prev=26.6% test_prev=25.0% AUROC=0.2787
+  repeat=0 fold=3: train_prev=26.6% test_prev=25.0% AUROC=0.7457
+  repeat=0 fold=4: train_prev=26.2% test_prev=26.3% AUROC=0.2172
+  --> repeat 0 mean: 0.4428
+  repeat=1 fold=0: train_prev=25.3% test_prev=30.0% AUROC=0.7831
+  repeat=1 fold=1: train_prev=26.6% test_prev=25.0% AUROC=0.6143
+  repeat=1 fold=2: train_prev=26.6% test_prev=25.0% AUROC=0.3499
+  repeat=1 fold=3: train_prev=26.6% test_prev=25.0% AUROC=0.4288
+  repeat=1 fold=4: train_prev=26.2% test_prev=26.3% AUROC=0.4236
+  --> repeat 1 mean: 0.5199
+  repeat=7 fold=0: train_prev=25.3% test_prev=30.0% AUROC=0.4012
+  repeat=7 fold=1: train_prev=26.6% test_prev=25.0% AUROC=0.4739
+  repeat=7 fold=2: train_prev=26.6% test_prev=25.0% AUROC=0.6495
+  repeat=7 fold=3: train_prev=26.6% test_prev=25.0% AUROC=0.5536
+  repeat=7 fold=4: train_prev=26.2% test_prev=26.3% AUROC=0.7104
+  --> repeat 7 mean: 0.5577
+  repeat=42 fold=0: train_prev=25.3% test_prev=30.0% AUROC=0.7014
+  repeat=42 fold=1: train_prev=26.6% test_prev=25.0% AUROC=0.6561
+  repeat=42 fold=2: train_prev=26.6% test_prev=25.0% AUROC=0.2780
+  repeat=42 fold=3: train_prev=26.6% test_prev=25.0% AUROC=0.5203
+  repeat=42 fold=4: train_prev=26.2% test_prev=26.3% AUROC=0.6646
+  --> repeat 42 mean: 0.5641
+  repeat=123 fold=0: train_prev=25.3% test_prev=30.0% AUROC=0.3071
+  repeat=123 fold=1: train_prev=26.6% test_prev=25.0% AUROC=0.5141
+  repeat=123 fold=2: train_prev=26.6% test_prev=25.0% AUROC=0.8115
+  repeat=123 fold=3: train_prev=26.6% test_prev=25.0% AUROC=0.4900
+  repeat=123 fold=4: train_prev=26.2% test_prev=26.3% AUROC=0.5805
+  --> repeat 123 mean: 0.5406
+  ==> GRAND mean 0.5250, std 0.1630, n_runs=25, range 0.2172-0.8115
+
+=== LSTM baseline (12hr) ===
+  repeat=0 fold=0: train_prev=25.3% test_prev=30.0% AUROC=0.5465
+  repeat=0 fold=1: train_prev=26.6% test_prev=25.0% AUROC=0.5052
+  repeat=0 fold=2: train_prev=26.6% test_prev=25.0% AUROC=0.3820
+  repeat=0 fold=3: train_prev=26.6% test_prev=25.0% AUROC=0.7867
+  repeat=0 fold=4: train_prev=26.2% test_prev=26.3% AUROC=0.2867
+  --> repeat 0 mean: 0.5014
+  repeat=1 fold=0: train_prev=25.3% test_prev=30.0% AUROC=0.8196
+  repeat=1 fold=1: train_prev=26.6% test_prev=25.0% AUROC=0.6636
+  repeat=1 fold=2: train_prev=26.6% test_prev=25.0% AUROC=0.3244
+  repeat=1 fold=3: train_prev=26.6% test_prev=25.0% AUROC=0.7384
+  repeat=1 fold=4: train_prev=26.2% test_prev=26.3% AUROC=0.3288
+  --> repeat 1 mean: 0.5750
+  repeat=7 fold=0: train_prev=25.3% test_prev=30.0% AUROC=0.4150
+  repeat=7 fold=1: train_prev=26.6% test_prev=25.0% AUROC=0.3337
+  repeat=7 fold=2: train_prev=26.6% test_prev=25.0% AUROC=0.7251
+  repeat=7 fold=3: train_prev=26.6% test_prev=25.0% AUROC=0.6472
+  repeat=7 fold=4: train_prev=26.2% test_prev=26.3% AUROC=0.7072
+  --> repeat 7 mean: 0.5657
+  repeat=42 fold=0: train_prev=25.3% test_prev=30.0% AUROC=0.7125
+  repeat=42 fold=1: train_prev=26.6% test_prev=25.0% AUROC=0.6302
+  repeat=42 fold=2: train_prev=26.6% test_prev=25.0% AUROC=0.5113
+  repeat=42 fold=3: train_prev=26.6% test_prev=25.0% AUROC=0.5230
+  repeat=42 fold=4: train_prev=26.2% test_prev=26.3% AUROC=0.7024
+  --> repeat 42 mean: 0.6159
+  repeat=123 fold=0: train_prev=25.3% test_prev=30.0% AUROC=0.3544
+  repeat=123 fold=1: train_prev=26.6% test_prev=25.0% AUROC=0.5815
+  repeat=123 fold=2: train_prev=26.6% test_prev=25.0% AUROC=0.8108
+  repeat=123 fold=3: train_prev=26.6% test_prev=25.0% AUROC=0.4683
+  repeat=123 fold=4: train_prev=26.2% test_prev=26.3% AUROC=0.3993
+  --> repeat 123 mean: 0.5228
+  ==> GRAND mean 0.5561, std 0.1674, n_runs=25, range 0.2867-0.8196
+
+=== Full TCN-Transformer (6hr window) ===
+  repeat=0 fold=0: train_prev=25.3% test_prev=30.0% AUROC=0.4421
+  repeat=0 fold=1: train_prev=26.6% test_prev=25.0% AUROC=0.4373
+  repeat=0 fold=2: train_prev=26.6% test_prev=25.0% AUROC=0.2918
+  repeat=0 fold=3: train_prev=26.6% test_prev=25.0% AUROC=0.7481
+  repeat=0 fold=4: train_prev=26.2% test_prev=26.3% AUROC=0.2642
+  --> repeat 0 mean: 0.4367
+  repeat=1 fold=0: train_prev=25.3% test_prev=30.0% AUROC=0.7399
+  repeat=1 fold=1: train_prev=26.6% test_prev=25.0% AUROC=0.6494
+  repeat=1 fold=2: train_prev=26.6% test_prev=25.0% AUROC=0.2433
+  repeat=1 fold=3: train_prev=26.6% test_prev=25.0% AUROC=0.7292
+  repeat=1 fold=4: train_prev=26.2% test_prev=26.3% AUROC=0.3997
+  --> repeat 1 mean: 0.5523
+  repeat=7 fold=0: train_prev=25.3% test_prev=30.0% AUROC=0.3510
+  repeat=7 fold=1: train_prev=26.6% test_prev=25.0% AUROC=0.3592
+  repeat=7 fold=2: train_prev=26.6% test_prev=25.0% AUROC=0.5967
+  repeat=7 fold=3: train_prev=26.6% test_prev=25.0% AUROC=0.5188
+  repeat=7 fold=4: train_prev=26.2% test_prev=26.3% AUROC=0.5462
+  --> repeat 7 mean: 0.4744
+  repeat=42 fold=0: train_prev=25.3% test_prev=30.0% AUROC=0.6417
+  repeat=42 fold=1: train_prev=26.6% test_prev=25.0% AUROC=0.6302
+  repeat=42 fold=2: train_prev=26.6% test_prev=25.0% AUROC=0.3887
+  repeat=42 fold=3: train_prev=26.6% test_prev=25.0% AUROC=0.2734
+  repeat=42 fold=4: train_prev=26.2% test_prev=26.3% AUROC=0.5821
+  --> repeat 42 mean: 0.5032
+  repeat=123 fold=0: train_prev=25.3% test_prev=30.0% AUROC=0.3994
+  repeat=123 fold=1: train_prev=26.6% test_prev=25.0% AUROC=0.5785
+  repeat=123 fold=2: train_prev=26.6% test_prev=25.0% AUROC=0.7114
+  repeat=123 fold=3: train_prev=26.6% test_prev=25.0% AUROC=0.4646
+  repeat=123 fold=4: train_prev=26.2% test_prev=26.3% AUROC=0.6000
+  --> repeat 123 mean: 0.5508
+  ==> GRAND mean 0.5035, std 0.1561, n_runs=25, range 0.2433-0.7481
+
+=== Full TCN-Transformer (24hr window) ===
+  repeat=0 fold=0: train_prev=25.3% test_prev=30.0% AUROC=0.5246
+  repeat=0 fold=1: train_prev=26.6% test_prev=25.0% AUROC=0.4092
+  repeat=0 fold=2: train_prev=26.6% test_prev=25.0% AUROC=0.2585
+  repeat=0 fold=3: train_prev=26.6% test_prev=25.0% AUROC=0.8297
+  repeat=0 fold=4: train_prev=26.2% test_prev=26.3% AUROC=0.2041
+  --> repeat 0 mean: 0.4452
+  repeat=1 fold=0: train_prev=25.3% test_prev=30.0% AUROC=0.7190
+  repeat=1 fold=1: train_prev=26.6% test_prev=25.0% AUROC=0.6399
+  repeat=1 fold=2: train_prev=26.6% test_prev=25.0% AUROC=0.2452
+  repeat=1 fold=3: train_prev=26.6% test_prev=25.0% AUROC=0.9372
+  repeat=1 fold=4: train_prev=26.2% test_prev=26.3% AUROC=0.5106
+  --> repeat 1 mean: 0.6104
+  repeat=7 fold=0: train_prev=25.3% test_prev=30.0% AUROC=0.4372
+  repeat=7 fold=1: train_prev=26.6% test_prev=25.0% AUROC=0.2832
+  repeat=7 fold=2: train_prev=26.6% test_prev=25.0% AUROC=0.7380
+  repeat=7 fold=3: train_prev=26.6% test_prev=25.0% AUROC=0.4718
+  repeat=7 fold=4: train_prev=26.2% test_prev=26.3% AUROC=0.7297
+  --> repeat 7 mean: 0.5320
+  repeat=42 fold=0: train_prev=25.3% test_prev=30.0% AUROC=0.7222
+  repeat=42 fold=1: train_prev=26.6% test_prev=25.0% AUROC=0.5311
+  repeat=42 fold=2: train_prev=26.6% test_prev=25.0% AUROC=0.7148
+  repeat=42 fold=3: train_prev=26.6% test_prev=25.0% AUROC=0.1747
+  repeat=42 fold=4: train_prev=26.2% test_prev=26.3% AUROC=0.7904
+  --> repeat 42 mean: 0.5867
+  repeat=123 fold=0: train_prev=25.3% test_prev=30.0% AUROC=0.3502
+  repeat=123 fold=1: train_prev=26.6% test_prev=25.0% AUROC=0.4950
+  repeat=123 fold=2: train_prev=26.6% test_prev=25.0% AUROC=0.7724
+  repeat=123 fold=3: train_prev=26.6% test_prev=25.0% AUROC=0.6013
+  repeat=123 fold=4: train_prev=26.2% test_prev=26.3% AUROC=0.5432
+  --> repeat 123 mean: 0.5524
+  ==> GRAND mean 0.5453, std 0.2090, n_runs=25, range 0.1747-0.9372
+
+
+=== SUMMARY TABLE (repeated stratified k-fold, safe to paste into Table 6) ===
+Variant                                Mean AUROC   Std      N runs   Range
+Full TCN-Transformer (12hr)            0.5140       0.1616   25       0.1628-0.8064
+TCN-only, no attention (12hr)          0.5250       0.1630   25       0.2172-0.8115
+LSTM baseline (12hr)                   0.5561       0.1674   25       0.2867-0.8196
+Full TCN-Transformer (6hr window)      0.5035       0.1561   25       0.2433-0.7481
+Full TCN-Transformer (24hr window)     0.5453       0.2090   25       0.1747-0.9372
+
+
+
+
+
+(neuralicu-fix) C:\Users\ASUS\Documents\Drive\Research paper\NeuralLCU\Dataset>python run_ablations_kfold.py > outputs\logs\step3b_pooled.log 2>&1
+
+(neuralicu-fix) C:\Users\ASUS\Documents\Drive\Research paper\NeuralLCU\Dataset>type outputs\logs\step3b_pooled.log
+Feature columns (12): ['DiasBP', 'GCS', 'HeartRate', 'MeanBP', 'RespRate', 'SpO2', 'SysBP', 'Temperature', 'Bilirubin', 'Creatinine', 'Lactate', 'WBC']
+
+Cohort: 99 patients, 26 ever-septic (26.3%)
+
+=== Full TCN-Transformer (12hr) ===
+  repeat=0 fold=0: train_prev=25.3% test_prev=30.0% test_n=3098
+  repeat=0 fold=1: train_prev=26.6% test_prev=25.0% test_n=1144
+  repeat=0 fold=2: train_prev=26.6% test_prev=25.0% test_n=1463
+  repeat=0 fold=3: train_prev=26.6% test_prev=25.0% test_n=2526
+  repeat=0 fold=4: train_prev=26.2% test_prev=26.3% test_n=2075
+  --> repeat 0 POOLED out-of-fold AUROC (n=10306 windows across all folds): 0.4321
+  repeat=1 fold=0: train_prev=25.3% test_prev=30.0% test_n=1569
+  repeat=1 fold=1: train_prev=26.6% test_prev=25.0% test_n=2458
+  repeat=1 fold=2: train_prev=26.6% test_prev=25.0% test_n=2210
+  repeat=1 fold=3: train_prev=26.6% test_prev=25.0% test_n=1719
+  repeat=1 fold=4: train_prev=26.2% test_prev=26.3% test_n=2350
+  --> repeat 1 POOLED out-of-fold AUROC (n=10306 windows across all folds): 0.4780
+  repeat=7 fold=0: train_prev=25.3% test_prev=30.0% test_n=2281
+  repeat=7 fold=1: train_prev=26.6% test_prev=25.0% test_n=1432
+  repeat=7 fold=2: train_prev=26.6% test_prev=25.0% test_n=2328
+  repeat=7 fold=3: train_prev=26.6% test_prev=25.0% test_n=2795
+  repeat=7 fold=4: train_prev=26.2% test_prev=26.3% test_n=1470
+  --> repeat 7 POOLED out-of-fold AUROC (n=10306 windows across all folds): 0.5074
+  repeat=42 fold=0: train_prev=25.3% test_prev=30.0% test_n=3441
+  repeat=42 fold=1: train_prev=26.6% test_prev=25.0% test_n=2327
+  repeat=42 fold=2: train_prev=26.6% test_prev=25.0% test_n=1050
+  repeat=42 fold=3: train_prev=26.6% test_prev=25.0% test_n=1470
+  repeat=42 fold=4: train_prev=26.2% test_prev=26.3% test_n=2018
+  --> repeat 42 POOLED out-of-fold AUROC (n=10306 windows across all folds): 0.5100
+  repeat=123 fold=0: train_prev=25.3% test_prev=30.0% test_n=1637
+  repeat=123 fold=1: train_prev=26.6% test_prev=25.0% test_n=1776
+  repeat=123 fold=2: train_prev=26.6% test_prev=25.0% test_n=2020
+  repeat=123 fold=3: train_prev=26.6% test_prev=25.0% test_n=2533
+  repeat=123 fold=4: train_prev=26.2% test_prev=26.3% test_n=2340
+  --> repeat 123 POOLED out-of-fold AUROC (n=10306 windows across all folds): 0.5408
+  ==> GRAND mean (of 5 pooled repeat AUROCs): 0.4937, std 0.0366, range 0.4321-0.5408
+      (for comparison, old-style mean of 25 individual ~20-patient fold AUROCs: 0.5140, std 0.1616)
+
+=== TCN-only, no attention (12hr) ===
+  repeat=0 fold=0: train_prev=25.3% test_prev=30.0% test_n=3098
+  repeat=0 fold=1: train_prev=26.6% test_prev=25.0% test_n=1144
+  repeat=0 fold=2: train_prev=26.6% test_prev=25.0% test_n=1463
+  repeat=0 fold=3: train_prev=26.6% test_prev=25.0% test_n=2526
+  repeat=0 fold=4: train_prev=26.2% test_prev=26.3% test_n=2075
+  --> repeat 0 POOLED out-of-fold AUROC (n=10306 windows across all folds): 0.4616
+  repeat=1 fold=0: train_prev=25.3% test_prev=30.0% test_n=1569
+  repeat=1 fold=1: train_prev=26.6% test_prev=25.0% test_n=2458
+  repeat=1 fold=2: train_prev=26.6% test_prev=25.0% test_n=2210
+  repeat=1 fold=3: train_prev=26.6% test_prev=25.0% test_n=1719
+  repeat=1 fold=4: train_prev=26.2% test_prev=26.3% test_n=2350
+  --> repeat 1 POOLED out-of-fold AUROC (n=10306 windows across all folds): 0.5254
+  repeat=7 fold=0: train_prev=25.3% test_prev=30.0% test_n=2281
+  repeat=7 fold=1: train_prev=26.6% test_prev=25.0% test_n=1432
+  repeat=7 fold=2: train_prev=26.6% test_prev=25.0% test_n=2328
+  repeat=7 fold=3: train_prev=26.6% test_prev=25.0% test_n=2795
+  repeat=7 fold=4: train_prev=26.2% test_prev=26.3% test_n=1470
+  --> repeat 7 POOLED out-of-fold AUROC (n=10306 windows across all folds): 0.5174
+  repeat=42 fold=0: train_prev=25.3% test_prev=30.0% test_n=3441
+  repeat=42 fold=1: train_prev=26.6% test_prev=25.0% test_n=2327
+  repeat=42 fold=2: train_prev=26.6% test_prev=25.0% test_n=1050
+  repeat=42 fold=3: train_prev=26.6% test_prev=25.0% test_n=1470
+  repeat=42 fold=4: train_prev=26.2% test_prev=26.3% test_n=2018
+  --> repeat 42 POOLED out-of-fold AUROC (n=10306 windows across all folds): 0.5773
+  repeat=123 fold=0: train_prev=25.3% test_prev=30.0% test_n=1637
+  repeat=123 fold=1: train_prev=26.6% test_prev=25.0% test_n=1776
+  repeat=123 fold=2: train_prev=26.6% test_prev=25.0% test_n=2020
+  repeat=123 fold=3: train_prev=26.6% test_prev=25.0% test_n=2533
+  repeat=123 fold=4: train_prev=26.2% test_prev=26.3% test_n=2340
+  --> repeat 123 POOLED out-of-fold AUROC (n=10306 windows across all folds): 0.4750
+  ==> GRAND mean (of 5 pooled repeat AUROCs): 0.5113, std 0.0409, range 0.4616-0.5773
+      (for comparison, old-style mean of 25 individual ~20-patient fold AUROCs: 0.5250, std 0.1630)
+
+=== LSTM baseline (12hr) ===
+  repeat=0 fold=0: train_prev=25.3% test_prev=30.0% test_n=3098
+  repeat=0 fold=1: train_prev=26.6% test_prev=25.0% test_n=1144
+  repeat=0 fold=2: train_prev=26.6% test_prev=25.0% test_n=1463
+  repeat=0 fold=3: train_prev=26.6% test_prev=25.0% test_n=2526
+  repeat=0 fold=4: train_prev=26.2% test_prev=26.3% test_n=2075
+  --> repeat 0 POOLED out-of-fold AUROC (n=10306 windows across all folds): 0.5237
+  repeat=1 fold=0: train_prev=25.3% test_prev=30.0% test_n=1569
+  repeat=1 fold=1: train_prev=26.6% test_prev=25.0% test_n=2458
+  repeat=1 fold=2: train_prev=26.6% test_prev=25.0% test_n=2210
+  repeat=1 fold=3: train_prev=26.6% test_prev=25.0% test_n=1719
+  repeat=1 fold=4: train_prev=26.2% test_prev=26.3% test_n=2350
+  --> repeat 1 POOLED out-of-fold AUROC (n=10306 windows across all folds): 0.5662
+  repeat=7 fold=0: train_prev=25.3% test_prev=30.0% test_n=2281
+  repeat=7 fold=1: train_prev=26.6% test_prev=25.0% test_n=1432
+  repeat=7 fold=2: train_prev=26.6% test_prev=25.0% test_n=2328
+  repeat=7 fold=3: train_prev=26.6% test_prev=25.0% test_n=2795
+  repeat=7 fold=4: train_prev=26.2% test_prev=26.3% test_n=1470
+  --> repeat 7 POOLED out-of-fold AUROC (n=10306 windows across all folds): 0.5434
+  repeat=42 fold=0: train_prev=25.3% test_prev=30.0% test_n=3441
+  repeat=42 fold=1: train_prev=26.6% test_prev=25.0% test_n=2327
+  repeat=42 fold=2: train_prev=26.6% test_prev=25.0% test_n=1050
+  repeat=42 fold=3: train_prev=26.6% test_prev=25.0% test_n=1470
+  repeat=42 fold=4: train_prev=26.2% test_prev=26.3% test_n=2018
+  --> repeat 42 POOLED out-of-fold AUROC (n=10306 windows across all folds): 0.5769
+  repeat=123 fold=0: train_prev=25.3% test_prev=30.0% test_n=1637
+  repeat=123 fold=1: train_prev=26.6% test_prev=25.0% test_n=1776
+  repeat=123 fold=2: train_prev=26.6% test_prev=25.0% test_n=2020
+  repeat=123 fold=3: train_prev=26.6% test_prev=25.0% test_n=2533
+  repeat=123 fold=4: train_prev=26.2% test_prev=26.3% test_n=2340
+  --> repeat 123 POOLED out-of-fold AUROC (n=10306 windows across all folds): 0.4766
+  ==> GRAND mean (of 5 pooled repeat AUROCs): 0.5374, std 0.0355, range 0.4766-0.5769
+      (for comparison, old-style mean of 25 individual ~20-patient fold AUROCs: 0.5561, std 0.1674)
+
+=== Full TCN-Transformer (6hr window) ===
+  repeat=0 fold=0: train_prev=25.3% test_prev=30.0% test_n=3342
+  repeat=0 fold=1: train_prev=26.6% test_prev=25.0% test_n=1270
+  repeat=0 fold=2: train_prev=26.6% test_prev=25.0% test_n=1589
+  repeat=0 fold=3: train_prev=26.6% test_prev=25.0% test_n=2681
+  repeat=0 fold=4: train_prev=26.2% test_prev=26.3% test_n=2219
+  --> repeat 0 POOLED out-of-fold AUROC (n=11101 windows across all folds): 0.4281
+  repeat=1 fold=0: train_prev=25.3% test_prev=30.0% test_n=1707
+  repeat=1 fold=1: train_prev=26.6% test_prev=25.0% test_n=2678
+  repeat=1 fold=2: train_prev=26.6% test_prev=25.0% test_n=2348
+  repeat=1 fold=3: train_prev=26.6% test_prev=25.0% test_n=1863
+  repeat=1 fold=4: train_prev=26.2% test_prev=26.3% test_n=2505
+  --> repeat 1 POOLED out-of-fold AUROC (n=11101 windows across all folds): 0.4979
+  repeat=7 fold=0: train_prev=25.3% test_prev=30.0% test_n=2412
+  repeat=7 fold=1: train_prev=26.6% test_prev=25.0% test_n=1564
+  repeat=7 fold=2: train_prev=26.6% test_prev=25.0% test_n=2472
+  repeat=7 fold=3: train_prev=26.6% test_prev=25.0% test_n=3039
+  repeat=7 fold=4: train_prev=26.2% test_prev=26.3% test_n=1614
+  --> repeat 7 POOLED out-of-fold AUROC (n=11101 windows across all folds): 0.4548
+  repeat=42 fold=0: train_prev=25.3% test_prev=30.0% test_n=3597
+  repeat=42 fold=1: train_prev=26.6% test_prev=25.0% test_n=2553
+  repeat=42 fold=2: train_prev=26.6% test_prev=25.0% test_n=1211
+  repeat=42 fold=3: train_prev=26.6% test_prev=25.0% test_n=1584
+  repeat=42 fold=4: train_prev=26.2% test_prev=26.3% test_n=2156
+  --> repeat 42 POOLED out-of-fold AUROC (n=11101 windows across all folds): 0.5327
+  repeat=123 fold=0: train_prev=25.3% test_prev=30.0% test_n=1780
+  repeat=123 fold=1: train_prev=26.6% test_prev=25.0% test_n=1920
+  repeat=123 fold=2: train_prev=26.6% test_prev=25.0% test_n=2158
+  repeat=123 fold=3: train_prev=26.6% test_prev=25.0% test_n=2747
+  repeat=123 fold=4: train_prev=26.2% test_prev=26.3% test_n=2496
+  --> repeat 123 POOLED out-of-fold AUROC (n=11101 windows across all folds): 0.4862
+  ==> GRAND mean (of 5 pooled repeat AUROCs): 0.4799, std 0.0359, range 0.4281-0.5327
+      (for comparison, old-style mean of 25 individual ~20-patient fold AUROCs: 0.5035, std 0.1561)
+
+=== Full TCN-Transformer (24hr window) ===
+  repeat=0 fold=0: train_prev=25.3% test_prev=30.0% test_n=2649
+  repeat=0 fold=1: train_prev=26.6% test_prev=25.0% test_n=897
+  repeat=0 fold=2: train_prev=26.6% test_prev=25.0% test_n=1230
+  repeat=0 fold=3: train_prev=26.6% test_prev=25.0% test_n=2233
+  repeat=0 fold=4: train_prev=26.2% test_prev=26.3% test_n=1810
+  --> repeat 0 POOLED out-of-fold AUROC (n=8819 windows across all folds): 0.4642
+  repeat=1 fold=0: train_prev=25.3% test_prev=30.0% test_n=1308
+  repeat=1 fold=1: train_prev=26.6% test_prev=25.0% test_n=2055
+  repeat=1 fold=2: train_prev=26.6% test_prev=25.0% test_n=1949
+  repeat=1 fold=3: train_prev=26.6% test_prev=25.0% test_n=1441
+  repeat=1 fold=4: train_prev=26.2% test_prev=26.3% test_n=2066
+  --> repeat 1 POOLED out-of-fold AUROC (n=8819 windows across all folds): 0.5757
+  repeat=7 fold=0: train_prev=25.3% test_prev=30.0% test_n=2031
+  repeat=7 fold=1: train_prev=26.6% test_prev=25.0% test_n=1181
+  repeat=7 fold=2: train_prev=26.6% test_prev=25.0% test_n=2052
+  repeat=7 fold=3: train_prev=26.6% test_prev=25.0% test_n=2350
+  repeat=7 fold=4: train_prev=26.2% test_prev=26.3% test_n=1205
+  --> repeat 7 POOLED out-of-fold AUROC (n=8819 windows across all folds): 0.5235
+  repeat=42 fold=0: train_prev=25.3% test_prev=30.0% test_n=3140
+  repeat=42 fold=1: train_prev=26.6% test_prev=25.0% test_n=1909
+  repeat=42 fold=2: train_prev=26.6% test_prev=25.0% test_n=758
+  repeat=42 fold=3: train_prev=26.6% test_prev=25.0% test_n=1248
+  repeat=42 fold=4: train_prev=26.2% test_prev=26.3% test_n=1764
+  --> repeat 42 POOLED out-of-fold AUROC (n=8819 windows across all folds): 0.5300
+  repeat=123 fold=0: train_prev=25.3% test_prev=30.0% test_n=1372
+  repeat=123 fold=1: train_prev=26.6% test_prev=25.0% test_n=1499
+  repeat=123 fold=2: train_prev=26.6% test_prev=25.0% test_n=1763
+  repeat=123 fold=3: train_prev=26.6% test_prev=25.0% test_n=2131
+  repeat=123 fold=4: train_prev=26.2% test_prev=26.3% test_n=2054
+  --> repeat 123 POOLED out-of-fold AUROC (n=8819 windows across all folds): 0.5056
+  ==> GRAND mean (of 5 pooled repeat AUROCs): 0.5198, std 0.0362, range 0.4642-0.5757
+      (for comparison, old-style mean of 25 individual ~20-patient fold AUROCs: 0.5453, std 0.2090)
+
+
+=== SUMMARY TABLE (pooled out-of-fold AUROC per repeat, safe to paste into Table 6) ===
+Variant                                Mean AUROC   Std      N repeats  Range
+Full TCN-Transformer (12hr)            0.4937       0.0366   5          0.4321-0.5408
+TCN-only, no attention (12hr)          0.5113       0.0409   5          0.4616-0.5773
+LSTM baseline (12hr)                   0.5374       0.0355   5          0.4766-0.5769
+Full TCN-Transformer (6hr window)      0.4799       0.0359   5          0.4281-0.5327
+Full TCN-Transformer (24hr window)     0.5198       0.0362   5          0.4642-0.5757
+
+(neuralicu-fix) C:\Users\ASUS\Documents\Drive\Research paper\NeuralLCU\Dataset>python xgboost_same_cohort_kfold.py > outputs\logs\step3a_kfold.log 2>&1
+
+(neuralicu-fix) C:\Users\ASUS\Documents\Drive\Research paper\NeuralLCU\Dataset>type outputs\logs\step3a_kfold.log
+Using 12 feature columns: ['DiasBP', 'GCS', 'HeartRate', 'MeanBP', 'RespRate', 'SpO2', 'SysBP', 'Temperature', 'Bilirubin', 'Creatinine', 'Lactate', 'WBC']
+
+Cohort: 99 patients, 26 ever-septic (26.3%)
+
+  repeat=0 fold=0: train_prev=25.3% test_prev=30.0% test_n=3098
+  repeat=0 fold=1: train_prev=26.6% test_prev=25.0% test_n=1144
+  repeat=0 fold=2: train_prev=26.6% test_prev=25.0% test_n=1463
+  repeat=0 fold=3: train_prev=26.6% test_prev=25.0% test_n=2526
+  repeat=0 fold=4: train_prev=26.2% test_prev=26.3% test_n=2075
+  --> repeat 0 POOLED out-of-fold AUROC (n=10306 windows across all folds): 0.4178, AUPRC: 0.3028, bootstrap 95% CI: 0.2797-0.5965
+
+  repeat=1 fold=0: train_prev=25.3% test_prev=30.0% test_n=1569
+  repeat=1 fold=1: train_prev=26.6% test_prev=25.0% test_n=2458
+  repeat=1 fold=2: train_prev=26.6% test_prev=25.0% test_n=2210
+  repeat=1 fold=3: train_prev=26.6% test_prev=25.0% test_n=1719
+  repeat=1 fold=4: train_prev=26.2% test_prev=26.3% test_n=2350
+  --> repeat 1 POOLED out-of-fold AUROC (n=10306 windows across all folds): 0.5007, AUPRC: 0.3436, bootstrap 95% CI: 0.3652-0.6952
+
+  repeat=7 fold=0: train_prev=25.3% test_prev=30.0% test_n=2281
+  repeat=7 fold=1: train_prev=26.6% test_prev=25.0% test_n=1432
+  repeat=7 fold=2: train_prev=26.6% test_prev=25.0% test_n=2328
+  repeat=7 fold=3: train_prev=26.6% test_prev=25.0% test_n=2795
+  repeat=7 fold=4: train_prev=26.2% test_prev=26.3% test_n=1470
+  --> repeat 7 POOLED out-of-fold AUROC (n=10306 windows across all folds): 0.5016, AUPRC: 0.3298, bootstrap 95% CI: 0.3650-0.6698
+
+  repeat=42 fold=0: train_prev=25.3% test_prev=30.0% test_n=3441
+  repeat=42 fold=1: train_prev=26.6% test_prev=25.0% test_n=2327
+  repeat=42 fold=2: train_prev=26.6% test_prev=25.0% test_n=1050
+  repeat=42 fold=3: train_prev=26.6% test_prev=25.0% test_n=1470
+  repeat=42 fold=4: train_prev=26.2% test_prev=26.3% test_n=2018
+  --> repeat 42 POOLED out-of-fold AUROC (n=10306 windows across all folds): 0.4976, AUPRC: 0.3528, bootstrap 95% CI: 0.3508-0.7020
+
+  repeat=123 fold=0: train_prev=25.3% test_prev=30.0% test_n=1637
+  repeat=123 fold=1: train_prev=26.6% test_prev=25.0% test_n=1776
+  repeat=123 fold=2: train_prev=26.6% test_prev=25.0% test_n=2020
+  repeat=123 fold=3: train_prev=26.6% test_prev=25.0% test_n=2533
+  repeat=123 fold=4: train_prev=26.2% test_prev=26.3% test_n=2340
+  --> repeat 123 POOLED out-of-fold AUROC (n=10306 windows across all folds): 0.5301, AUPRC: 0.3542, bootstrap 95% CI: 0.3889-0.7048
+
+=== SUMMARY (pooled out-of-fold AUROC per repeat) ===
+Mean AUROC: 0.4896, std: 0.0378, range: 0.4178-0.5301, n_repeats=5
+Mean AUPRC: 0.3366, std: 0.0190
+
+(for comparison, old-style mean of 25 individual ~20-patient fold AUROCs: 0.5498, std 0.1316)
+
+
+
+
+
+(neuralicu-fix) C:\Users\ASUS\Documents\Drive\Research paper\NeuralLCU\Dataset>python run_dp_tradeoff.py
+Feature columns (12): ['DiasBP', 'GCS', 'HeartRate', 'MeanBP', 'RespRate', 'SpO2', 'SysBP', 'Temperature', 'Bilirubin', 'Creatinine', 'Lactate', 'WBC']
+
+=== WITHOUT DP ===
+  seed 0: AUROC = 0.7273
+  seed 1: AUROC = 0.8462
+  seed 7: AUROC = 0.4946
+  seed 42: AUROC = 0.2831
+  seed 123: AUROC = 0.5093
+
+=== WITH DP (target eps=1.0, delta=1e-5, C=1.0) ===
+C:\Users\ASUS\anaconda3\envs\neuralicu-fix\lib\site-packages\opacus\privacy_engine.py:98: UserWarning: Secure RNG turned off. This is perfectly fine for experimentation as it allows for much faster training performance, but remember to turn it on and retrain one last time before production with ``secure_mode`` turned on.
+  warnings.warn(
+C:\Users\ASUS\anaconda3\envs\neuralicu-fix\lib\site-packages\opacus\accountants\analysis\rdp.py:332: UserWarning: Optimal order is the largest alpha. Please consider expanding the range of alphas to get a tighter privacy bound.
+  warnings.warn(
+  seed 0: AUROC = 0.9181, achieved epsilon = 0.9927
+C:\Users\ASUS\anaconda3\envs\neuralicu-fix\lib\site-packages\opacus\privacy_engine.py:98: UserWarning: Secure RNG turned off. This is perfectly fine for experimentation as it allows for much faster training performance, but remember to turn it on and retrain one last time before production with ``secure_mode`` turned on.
+  warnings.warn(
+C:\Users\ASUS\anaconda3\envs\neuralicu-fix\lib\site-packages\opacus\accountants\analysis\rdp.py:332: UserWarning: Optimal order is the largest alpha. Please consider expanding the range of alphas to get a tighter privacy bound.
+  warnings.warn(
+  seed 1: AUROC = 0.8968, achieved epsilon = 0.9922
+C:\Users\ASUS\anaconda3\envs\neuralicu-fix\lib\site-packages\opacus\privacy_engine.py:98: UserWarning: Secure RNG turned off. This is perfectly fine for experimentation as it allows for much faster training performance, but remember to turn it on and retrain one last time before production with ``secure_mode`` turned on.
+  warnings.warn(
+C:\Users\ASUS\anaconda3\envs\neuralicu-fix\lib\site-packages\opacus\accountants\analysis\rdp.py:332: UserWarning: Optimal order is the largest alpha. Please consider expanding the range of alphas to get a tighter privacy bound.
+  warnings.warn(
+  seed 7: AUROC = 0.5388, achieved epsilon = 0.9954
+C:\Users\ASUS\anaconda3\envs\neuralicu-fix\lib\site-packages\opacus\privacy_engine.py:98: UserWarning: Secure RNG turned off. This is perfectly fine for experimentation as it allows for much faster training performance, but remember to turn it on and retrain one last time before production with ``secure_mode`` turned on.
+  warnings.warn(
+C:\Users\ASUS\anaconda3\envs\neuralicu-fix\lib\site-packages\opacus\accountants\analysis\rdp.py:332: UserWarning: Optimal order is the largest alpha. Please consider expanding the range of alphas to get a tighter privacy bound.
+  warnings.warn(
+  seed 42: AUROC = 0.3791, achieved epsilon = 0.9967
+C:\Users\ASUS\anaconda3\envs\neuralicu-fix\lib\site-packages\opacus\privacy_engine.py:98: UserWarning: Secure RNG turned off. This is perfectly fine for experimentation as it allows for much faster training performance, but remember to turn it on and retrain one last time before production with ``secure_mode`` turned on.
+  warnings.warn(
+C:\Users\ASUS\anaconda3\envs\neuralicu-fix\lib\site-packages\opacus\accountants\analysis\rdp.py:332: UserWarning: Optimal order is the largest alpha. Please consider expanding the range of alphas to get a tighter privacy bound.
+  warnings.warn(
+  seed 123: AUROC = 0.6464, achieved epsilon = 0.9955
+
+=== SUMMARY (paste into Section 3.6 / paper text) ===
+Without DP: mean AUROC 0.5721, std 0.1963, range 0.2831-0.8462
+With DP:    mean AUROC 0.6758, std 0.2075, range 0.3791-0.9181
+Achieved epsilon (mean across seeds): 0.9945 (target was 1.0)
+Mean performance drop: -0.1037
+
+
+
+
+
+
+PS C:\Users\ASUS\Documents\Drive\Research paper\NeuralLCU\Dataset> C:\Users\ASUS\anaconda3\envs\neuralicu-fix\python.exe -u run_dp_tradeoff_kfold.py 2>&1 | Tee-Object -FilePath outputs\logs\step4_kfold_v2.log
+Feature columns (12): ['DiasBP', 'GCS', 'HeartRate', 'MeanBP', 'RespRate', 'SpO2', 'SysBP', 'Temperature', 'Bilirubin', 'Creatinine', 'Lactate', 'WBC']
+
+Cohort: 99 patients, 26 ever-septic (26.3%)
+
+C:\Users\ASUS\anaconda3\envs\neuralicu-fix\python.exe :
+C:\Users\ASUS\anaconda3\envs\neuralicu-fix\lib\site-packages\opacus\privacy_engine.py:98: UserWarning: Secure RNG
+turned off. This is perfectly fine for experimentation as it allows for much faster training performance, but remember
+to turn it on and retrain one last time before production with ``secure_mode`` turned on.
+At line:1 char:1
++ C:\Users\ASUS\anaconda3\envs\neuralicu-fix\python.exe -u run_dp_trade ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (C:\Users\ASUS\a...de`` turned on.:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+
+  warnings.warn(
+C:\Users\ASUS\anaconda3\envs\neuralicu-fix\lib\site-packages\opacus\accountants\analysis\rdp.py:332: UserWarning:
+Optimal order is the largest alpha. Please consider expanding the range of alphas to get a tighter privacy bound.
+  warnings.warn(
+  repeat=0 fold=0: train_prev=25.3% test_prev=30.0% test_n=3098 achieved_eps=0.9919
+C:\Users\ASUS\anaconda3\envs\neuralicu-fix\lib\site-packages\opacus\privacy_engine.py:98: UserWarning: Secure RNG
+turned off. This is perfectly fine for experimentation as it allows for much faster training performance, but remember
+to turn it on and retrain one last time before production with ``secure_mode`` turned on.
+  warnings.warn(
+C:\Users\ASUS\anaconda3\envs\neuralicu-fix\lib\site-packages\opacus\accountants\analysis\rdp.py:332: UserWarning:
+Optimal order is the largest alpha. Please consider expanding the range of alphas to get a tighter privacy bound.
+  warnings.warn(
+  repeat=0 fold=1: train_prev=26.6% test_prev=25.0% test_n=1144 achieved_eps=0.9959
+C:\Users\ASUS\anaconda3\envs\neuralicu-fix\lib\site-packages\opacus\privacy_engine.py:98: UserWarning: Secure RNG
+turned off. This is perfectly fine for experimentation as it allows for much faster training performance, but remember
+to turn it on and retrain one last time before production with ``secure_mode`` turned on.
+  warnings.warn(
+C:\Users\ASUS\anaconda3\envs\neuralicu-fix\lib\site-packages\opacus\accountants\analysis\rdp.py:332: UserWarning:
+Optimal order is the largest alpha. Please consider expanding the range of alphas to get a tighter privacy bound.
+  warnings.warn(
+  repeat=0 fold=2: train_prev=26.6% test_prev=25.0% test_n=1463 achieved_eps=0.9962
+C:\Users\ASUS\anaconda3\envs\neuralicu-fix\lib\site-packages\opacus\privacy_engine.py:98: UserWarning: Secure RNG
+turned off. This is perfectly fine for experimentation as it allows for much faster training performance, but remember
+to turn it on and retrain one last time before production with ``secure_mode`` turned on.
+  warnings.warn(
+C:\Users\ASUS\anaconda3\envs\neuralicu-fix\lib\site-packages\opacus\accountants\analysis\rdp.py:332: UserWarning:
+Optimal order is the largest alpha. Please consider expanding the range of alphas to get a tighter privacy bound.
+  warnings.warn(
+  repeat=0 fold=3: train_prev=26.6% test_prev=25.0% test_n=2526 achieved_eps=0.9928
+C:\Users\ASUS\anaconda3\envs\neuralicu-fix\lib\site-packages\opacus\privacy_engine.py:98: UserWarning: Secure RNG
+turned off. This is perfectly fine for experimentation as it allows for much faster training performance, but remember
+to turn it on and retrain one last time before production with ``secure_mode`` turned on.
+  warnings.warn(
+C:\Users\ASUS\anaconda3\envs\neuralicu-fix\lib\site-packages\opacus\accountants\analysis\rdp.py:332: UserWarning:
+Optimal order is the largest alpha. Please consider expanding the range of alphas to get a tighter privacy bound.
+  warnings.warn(
+  repeat=0 fold=4: train_prev=26.2% test_prev=26.3% test_n=2075 achieved_eps=0.9980
+  --> repeat 0: POOLED AUROC without DP = 0.5525, with DP = 0.4872, mean achieved eps = 0.9949
+
+C:\Users\ASUS\anaconda3\envs\neuralicu-fix\lib\site-packages\opacus\privacy_engine.py:98: UserWarning: Secure RNG
+turned off. This is perfectly fine for experimentation as it allows for much faster training performance, but remember
+to turn it on and retrain one last time before production with ``secure_mode`` turned on.
+  warnings.warn(
+C:\Users\ASUS\anaconda3\envs\neuralicu-fix\lib\site-packages\opacus\accountants\analysis\rdp.py:332: UserWarning:
+Optimal order is the largest alpha. Please consider expanding the range of alphas to get a tighter privacy bound.
+  warnings.warn(
+  repeat=1 fold=0: train_prev=25.3% test_prev=30.0% test_n=1569 achieved_eps=0.9927
+C:\Users\ASUS\anaconda3\envs\neuralicu-fix\lib\site-packages\opacus\privacy_engine.py:98: UserWarning: Secure RNG
+turned off. This is perfectly fine for experimentation as it allows for much faster training performance, but remember
+to turn it on and retrain one last time before production with ``secure_mode`` turned on.
+  warnings.warn(
+C:\Users\ASUS\anaconda3\envs\neuralicu-fix\lib\site-packages\opacus\accountants\analysis\rdp.py:332: UserWarning:
+Optimal order is the largest alpha. Please consider expanding the range of alphas to get a tighter privacy bound.
+  warnings.warn(
+  repeat=1 fold=1: train_prev=26.6% test_prev=25.0% test_n=2458 achieved_eps=0.9994
+C:\Users\ASUS\anaconda3\envs\neuralicu-fix\lib\site-packages\opacus\privacy_engine.py:98: UserWarning: Secure RNG
+turned off. This is perfectly fine for experimentation as it allows for much faster training performance, but remember
+to turn it on and retrain one last time before production with ``secure_mode`` turned on.
+  warnings.warn(
+C:\Users\ASUS\anaconda3\envs\neuralicu-fix\lib\site-packages\opacus\accountants\analysis\rdp.py:332: UserWarning:
+Optimal order is the largest alpha. Please consider expanding the range of alphas to get a tighter privacy bound.
+  warnings.warn(
+  repeat=1 fold=2: train_prev=26.6% test_prev=25.0% test_n=2210 achieved_eps=0.9996
+C:\Users\ASUS\anaconda3\envs\neuralicu-fix\lib\site-packages\opacus\privacy_engine.py:98: UserWarning: Secure RNG
+turned off. This is perfectly fine for experimentation as it allows for much faster training performance, but remember
+to turn it on and retrain one last time before production with ``secure_mode`` turned on.
+  warnings.warn(
+C:\Users\ASUS\anaconda3\envs\neuralicu-fix\lib\site-packages\opacus\accountants\analysis\rdp.py:332: UserWarning:
+Optimal order is the largest alpha. Please consider expanding the range of alphas to get a tighter privacy bound.
+  warnings.warn(
+  repeat=1 fold=3: train_prev=26.6% test_prev=25.0% test_n=1719 achieved_eps=0.9935
+C:\Users\ASUS\anaconda3\envs\neuralicu-fix\lib\site-packages\opacus\privacy_engine.py:98: UserWarning: Secure RNG
+turned off. This is perfectly fine for experimentation as it allows for much faster training performance, but remember
+to turn it on and retrain one last time before production with ``secure_mode`` turned on.
+  warnings.warn(
+C:\Users\ASUS\anaconda3\envs\neuralicu-fix\lib\site-packages\opacus\accountants\analysis\rdp.py:332: UserWarning:
+Optimal order is the largest alpha. Please consider expanding the range of alphas to get a tighter privacy bound.
+  warnings.warn(
+  repeat=1 fold=4: train_prev=26.2% test_prev=26.3% test_n=2350 achieved_eps=0.9905
+  --> repeat 1: POOLED AUROC without DP = 0.5790, with DP = 0.5198, mean achieved eps = 0.9951
+
+C:\Users\ASUS\anaconda3\envs\neuralicu-fix\lib\site-packages\opacus\privacy_engine.py:98: UserWarning: Secure RNG
+turned off. This is perfectly fine for experimentation as it allows for much faster training performance, but remember
+to turn it on and retrain one last time before production with ``secure_mode`` turned on.
+  warnings.warn(
+C:\Users\ASUS\anaconda3\envs\neuralicu-fix\lib\site-packages\opacus\accountants\analysis\rdp.py:332: UserWarning:
+Optimal order is the largest alpha. Please consider expanding the range of alphas to get a tighter privacy bound.
+  warnings.warn(
+  repeat=7 fold=0: train_prev=25.3% test_prev=30.0% test_n=2281 achieved_eps=0.9950
+C:\Users\ASUS\anaconda3\envs\neuralicu-fix\lib\site-packages\opacus\privacy_engine.py:98: UserWarning: Secure RNG
+turned off. This is perfectly fine for experimentation as it allows for much faster training performance, but remember
+to turn it on and retrain one last time before production with ``secure_mode`` turned on.
+  warnings.warn(
+C:\Users\ASUS\anaconda3\envs\neuralicu-fix\lib\site-packages\opacus\accountants\analysis\rdp.py:332: UserWarning:
+Optimal order is the largest alpha. Please consider expanding the range of alphas to get a tighter privacy bound.
+  warnings.warn(
+  repeat=7 fold=1: train_prev=26.6% test_prev=25.0% test_n=1432 achieved_eps=0.9942
+C:\Users\ASUS\anaconda3\envs\neuralicu-fix\lib\site-packages\opacus\privacy_engine.py:98: UserWarning: Secure RNG
+turned off. This is perfectly fine for experimentation as it allows for much faster training performance, but remember
+to turn it on and retrain one last time before production with ``secure_mode`` turned on.
+  warnings.warn(
+C:\Users\ASUS\anaconda3\envs\neuralicu-fix\lib\site-packages\opacus\accountants\analysis\rdp.py:332: UserWarning:
+Optimal order is the largest alpha. Please consider expanding the range of alphas to get a tighter privacy bound.
+  warnings.warn(
+  repeat=7 fold=2: train_prev=26.6% test_prev=25.0% test_n=2328 achieved_eps=0.9972
+C:\Users\ASUS\anaconda3\envs\neuralicu-fix\lib\site-packages\opacus\privacy_engine.py:98: UserWarning: Secure RNG
+turned off. This is perfectly fine for experimentation as it allows for much faster training performance, but remember
+to turn it on and retrain one last time before production with ``secure_mode`` turned on.
+  warnings.warn(
+C:\Users\ASUS\anaconda3\envs\neuralicu-fix\lib\site-packages\opacus\accountants\analysis\rdp.py:332: UserWarning:
+Optimal order is the largest alpha. Please consider expanding the range of alphas to get a tighter privacy bound.
+  warnings.warn(
+  repeat=7 fold=3: train_prev=26.6% test_prev=25.0% test_n=2795 achieved_eps=0.9960
+C:\Users\ASUS\anaconda3\envs\neuralicu-fix\lib\site-packages\opacus\privacy_engine.py:98: UserWarning: Secure RNG
+turned off. This is perfectly fine for experimentation as it allows for much faster training performance, but remember
+to turn it on and retrain one last time before production with ``secure_mode`` turned on.
+  warnings.warn(
+C:\Users\ASUS\anaconda3\envs\neuralicu-fix\lib\site-packages\opacus\accountants\analysis\rdp.py:332: UserWarning:
+Optimal order is the largest alpha. Please consider expanding the range of alphas to get a tighter privacy bound.
+  warnings.warn(
+  repeat=7 fold=4: train_prev=26.2% test_prev=26.3% test_n=1470 achieved_eps=0.9962
+  --> repeat 7: POOLED AUROC without DP = 0.5480, with DP = 0.5759, mean achieved eps = 0.9957
+
+C:\Users\ASUS\anaconda3\envs\neuralicu-fix\lib\site-packages\opacus\privacy_engine.py:98: UserWarning: Secure RNG
+turned off. This is perfectly fine for experimentation as it allows for much faster training performance, but remember
+to turn it on and retrain one last time before production with ``secure_mode`` turned on.
+  warnings.warn(
+C:\Users\ASUS\anaconda3\envs\neuralicu-fix\lib\site-packages\opacus\accountants\analysis\rdp.py:332: UserWarning:
+Optimal order is the largest alpha. Please consider expanding the range of alphas to get a tighter privacy bound.
+  warnings.warn(
+  repeat=42 fold=0: train_prev=25.3% test_prev=30.0% test_n=3441 achieved_eps=0.9944
+C:\Users\ASUS\anaconda3\envs\neuralicu-fix\lib\site-packages\opacus\privacy_engine.py:98: UserWarning: Secure RNG
+turned off. This is perfectly fine for experimentation as it allows for much faster training performance, but remember
+to turn it on and retrain one last time before production with ``secure_mode`` turned on.
+  warnings.warn(
+C:\Users\ASUS\anaconda3\envs\neuralicu-fix\lib\site-packages\opacus\accountants\analysis\rdp.py:332: UserWarning:
+Optimal order is the largest alpha. Please consider expanding the range of alphas to get a tighter privacy bound.
+  warnings.warn(
+  repeat=42 fold=1: train_prev=26.6% test_prev=25.0% test_n=2327 achieved_eps=0.9972
+C:\Users\ASUS\anaconda3\envs\neuralicu-fix\lib\site-packages\opacus\privacy_engine.py:98: UserWarning: Secure RNG
+turned off. This is perfectly fine for experimentation as it allows for much faster training performance, but remember
+to turn it on and retrain one last time before production with ``secure_mode`` turned on.
+  warnings.warn(
+C:\Users\ASUS\anaconda3\envs\neuralicu-fix\lib\site-packages\opacus\accountants\analysis\rdp.py:332: UserWarning:
+Optimal order is the largest alpha. Please consider expanding the range of alphas to get a tighter privacy bound.
+  warnings.warn(
+  repeat=42 fold=2: train_prev=26.6% test_prev=25.0% test_n=1050 achieved_eps=0.9999
+C:\Users\ASUS\anaconda3\envs\neuralicu-fix\lib\site-packages\opacus\privacy_engine.py:98: UserWarning: Secure RNG
+turned off. This is perfectly fine for experimentation as it allows for much faster training performance, but remember
+to turn it on and retrain one last time before production with ``secure_mode`` turned on.
+  warnings.warn(
+C:\Users\ASUS\anaconda3\envs\neuralicu-fix\lib\site-packages\opacus\accountants\analysis\rdp.py:332: UserWarning:
+Optimal order is the largest alpha. Please consider expanding the range of alphas to get a tighter privacy bound.
+  warnings.warn(
+  repeat=42 fold=3: train_prev=26.6% test_prev=25.0% test_n=1470 achieved_eps=0.9962
+C:\Users\ASUS\anaconda3\envs\neuralicu-fix\lib\site-packages\opacus\privacy_engine.py:98: UserWarning: Secure RNG
+turned off. This is perfectly fine for experimentation as it allows for much faster training performance, but remember
+to turn it on and retrain one last time before production with ``secure_mode`` turned on.
+  warnings.warn(
+C:\Users\ASUS\anaconda3\envs\neuralicu-fix\lib\site-packages\opacus\accountants\analysis\rdp.py:332: UserWarning:
+Optimal order is the largest alpha. Please consider expanding the range of alphas to get a tighter privacy bound.
+  warnings.warn(
+  repeat=42 fold=4: train_prev=26.2% test_prev=26.3% test_n=2018 achieved_eps=0.9958
+  --> repeat 42: POOLED AUROC without DP = 0.6095, with DP = 0.5535, mean achieved eps = 0.9967
+
+C:\Users\ASUS\anaconda3\envs\neuralicu-fix\lib\site-packages\opacus\privacy_engine.py:98: UserWarning: Secure RNG
+turned off. This is perfectly fine for experimentation as it allows for much faster training performance, but remember
+to turn it on and retrain one last time before production with ``secure_mode`` turned on.
+  warnings.warn(
+C:\Users\ASUS\anaconda3\envs\neuralicu-fix\lib\site-packages\opacus\accountants\analysis\rdp.py:332: UserWarning:
+Optimal order is the largest alpha. Please consider expanding the range of alphas to get a tighter privacy bound.
+  warnings.warn(
+  repeat=123 fold=0: train_prev=25.3% test_prev=30.0% test_n=1637 achieved_eps=0.9988
+C:\Users\ASUS\anaconda3\envs\neuralicu-fix\lib\site-packages\opacus\privacy_engine.py:98: UserWarning: Secure RNG
+turned off. This is perfectly fine for experimentation as it allows for much faster training performance, but remember
+to turn it on and retrain one last time before production with ``secure_mode`` turned on.
+  warnings.warn(
+C:\Users\ASUS\anaconda3\envs\neuralicu-fix\lib\site-packages\opacus\accountants\analysis\rdp.py:332: UserWarning:
+Optimal order is the largest alpha. Please consider expanding the range of alphas to get a tighter privacy bound.
+  warnings.warn(
+  repeat=123 fold=1: train_prev=26.6% test_prev=25.0% test_n=1776 achieved_eps=0.9976
+C:\Users\ASUS\anaconda3\envs\neuralicu-fix\lib\site-packages\opacus\privacy_engine.py:98: UserWarning: Secure RNG
+turned off. This is perfectly fine for experimentation as it allows for much faster training performance, but remember
+to turn it on and retrain one last time before production with ``secure_mode`` turned on.
+  warnings.warn(
+C:\Users\ASUS\anaconda3\envs\neuralicu-fix\lib\site-packages\opacus\accountants\analysis\rdp.py:332: UserWarning:
+Optimal order is the largest alpha. Please consider expanding the range of alphas to get a tighter privacy bound.
+  warnings.warn(
+  repeat=123 fold=2: train_prev=26.6% test_prev=25.0% test_n=2020 achieved_eps=0.9958
+C:\Users\ASUS\anaconda3\envs\neuralicu-fix\lib\site-packages\opacus\privacy_engine.py:98: UserWarning: Secure RNG
+turned off. This is perfectly fine for experimentation as it allows for much faster training performance, but remember
+to turn it on and retrain one last time before production with ``secure_mode`` turned on.
+  warnings.warn(
+C:\Users\ASUS\anaconda3\envs\neuralicu-fix\lib\site-packages\opacus\accountants\analysis\rdp.py:332: UserWarning:
+Optimal order is the largest alpha. Please consider expanding the range of alphas to get a tighter privacy bound.
+  warnings.warn(
+  repeat=123 fold=3: train_prev=26.6% test_prev=25.0% test_n=2533 achieved_eps=0.9973
+C:\Users\ASUS\anaconda3\envs\neuralicu-fix\lib\site-packages\opacus\privacy_engine.py:98: UserWarning: Secure RNG
+turned off. This is perfectly fine for experimentation as it allows for much faster training performance, but remember
+to turn it on and retrain one last time before production with ``secure_mode`` turned on.
+  warnings.warn(
+C:\Users\ASUS\anaconda3\envs\neuralicu-fix\lib\site-packages\opacus\accountants\analysis\rdp.py:332: UserWarning:
+Optimal order is the largest alpha. Please consider expanding the range of alphas to get a tighter privacy bound.
+  warnings.warn(
+  repeat=123 fold=4: train_prev=26.2% test_prev=26.3% test_n=2340 achieved_eps=0.9905
+  --> repeat 123: POOLED AUROC without DP = 0.5316, with DP = 0.5168, mean achieved eps = 0.9960
+
+
+=== SUMMARY (pooled out-of-fold AUROC per repeat, paired by fold) ===
+Without DP: mean AUROC 0.5641, std 0.0273, range 0.5316-0.6095, n_repeats=5
+With DP:    mean AUROC 0.5307, std 0.0309, range 0.4872-0.5759, n_repeats=5
+Achieved epsilon (mean across all folds/repeats): 0.9957 (target was 1.0)
+Mean performance drop (no-DP minus DP): 0.0335 (negative means DP scored HIGHER than non-DP)
+
+Paired Wilcoxon signed-rank test (no-DP vs DP, n=5 repeats): stat=2.0000, p=0.1875
+NOTE: n=5 repeats gives very limited statistical power -- treat this p-value as suggestive, not conclusive, and report it as such.
+
+
+
+
+
+
+(neuralicu-fix) C:\Users\ASUS\Documents\Drive\Research paper\NeuralLCU\Dataset>findstr /n "read_text_smart" build_master_results_table.py
+45:def read_text_smart(path):
+107:ablations_text = read_text_smart(MIMIC_ABLATIONS_LOG)
+159:xgb_text = read_text_smart(MIMIC_XGBOOST_LOG)
+195:dp_text_raw = read_text_smart(MIMIC_DP_LOG)
+
+(neuralicu-fix) C:\Users\ASUS\Documents\Drive\Research paper\NeuralLCU\Dataset>python build_master_results_table.py
+                                 Dataset                              Model  Mean_AUROC  Std_AUROC  N_runs         Range                                                                                                                      Notes
+MIMIC-III Demo (n=99, stratified k-fold)          LSTM baseline, without DP      0.5641     0.0273       5 0.5316-0.6095                                      pooled OOF AUROC, 5 repeats x 5-fold, paired Wilcoxon p=0.1875 (n=5, not significant)
+MIMIC-III Demo (n=99, stratified k-fold)               LSTM baseline (12hr)      0.5374     0.0355       5 0.4766-0.5769           pooled out-of-fold AUROC, 5 repeats x 5-fold patient-level stratified CV; near chance (0.50) across all variants
+MIMIC-III Demo (n=99, stratified k-fold)    LSTM baseline, WITH DP (Opacus)      0.5307     0.0309       5 0.4872-0.5759 pooled OOF AUROC, 5 repeats x 5-fold, target eps=1.0, achieved eps=0.9957, paired Wilcoxon p=0.1875 (n=5, not significant)
+MIMIC-III Demo (n=99, stratified k-fold) Full TCN-Transformer (24hr window)      0.5198     0.0362       5 0.4642-0.5757           pooled out-of-fold AUROC, 5 repeats x 5-fold patient-level stratified CV; near chance (0.50) across all variants
+MIMIC-III Demo (n=99, stratified k-fold)      TCN-only, no attention (12hr)      0.5113     0.0409       5 0.4616-0.5773           pooled out-of-fold AUROC, 5 repeats x 5-fold patient-level stratified CV; near chance (0.50) across all variants
+MIMIC-III Demo (n=99, stratified k-fold)        Full TCN-Transformer (12hr)      0.4937     0.0366       5 0.4321-0.5408           pooled out-of-fold AUROC, 5 repeats x 5-fold patient-level stratified CV; near chance (0.50) across all variants
+MIMIC-III Demo (n=99, stratified k-fold)                            xgboost      0.4896     0.0378       5 0.4178-0.5301                 pooled OOF AUROC, 5 repeats x 5-fold; AUPRC 0.3366 (base rate ~26-30%, so near-chance); near chance (0.50)
+MIMIC-III Demo (n=99, stratified k-fold)  Full TCN-Transformer (6hr window)      0.4799     0.0359       5 0.4281-0.5327           pooled out-of-fold AUROC, 5 repeats x 5-fold patient-level stratified CV; near chance (0.50) across all variants
+               PhysioNet 2019 (n=40,336)                            xgboost      0.7498     0.0010      25 0.7482-0.7524            single random 80/20 split per seed (large-n dataset; prevalence-mismatch confound not applicable at this scale)
+               PhysioNet 2019 (n=40,336)                           tcn_only      0.7300     0.0063      25 0.7110-0.7422            single random 80/20 split per seed (large-n dataset; prevalence-mismatch confound not applicable at this scale)
+               PhysioNet 2019 (n=40,336)                      random_forest      0.7234     0.0005      25 0.7225-0.7242            single random 80/20 split per seed (large-n dataset; prevalence-mismatch confound not applicable at this scale)
+               PhysioNet 2019 (n=40,336)                    tcn_transformer      0.7234     0.0093      25 0.7046-0.7386            single random 80/20 split per seed (large-n dataset; prevalence-mismatch confound not applicable at this scale)
+               PhysioNet 2019 (n=40,336)                              gru_d      0.7070     0.0061      25 0.6914-0.7179            single random 80/20 split per seed (large-n dataset; prevalence-mismatch confound not applicable at this scale)
+               PhysioNet 2019 (n=40,336)                logistic_regression      0.6823     0.0000      25 0.6823-0.6823            single random 80/20 split per seed (large-n dataset; prevalence-mismatch confound not applicable at this scale)
+               PhysioNet 2019 (n=40,336)                   transformer_only      0.6372     0.0880      25 0.4911-0.7084            single random 80/20 split per seed (large-n dataset; prevalence-mismatch confound not applicable at this scale)
+
+Saved -> outputs\master_results_table.csv
+Saved -> outputs\master_results_table.md
+
+=== PhysioNet 2019: significance vs. proposed model (tcn_transformer) ===
+     baseline_model  n_paired_seeds  mean_diff_proposed_minus_baseline  std_diff     t_stat     t_pvalue  wilcoxon_stat  wilcoxon_pvalue  significant_at_0.05  proposed_wins
+   transformer_only              25                           0.086137  0.089322   4.821712 6.535020e-05            0.0     5.960464e-08                 True           True
+logistic_regression              25                           0.041047  0.009269  22.142924 1.756789e-17            0.0     5.960464e-08                 True           True
+              gru_d              25                           0.016341  0.012096   6.754918 5.492064e-07           10.0     2.563000e-06                 True           True
+      random_forest              25                          -0.000025  0.009390  -0.013179 9.895936e-01          157.0     8.948604e-01                False          False
+           tcn_only              25                          -0.006592  0.011485  -2.869990 8.433585e-03           65.0     7.370949e-03                 True          False
+            xgboost              25                          -0.026381  0.009737 -13.547462 9.756848e-13            0.0     5.960464e-08                 True          False
+
+
+
+
+
+
